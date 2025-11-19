@@ -1,0 +1,5 @@
+{
+  "name": "KoçSistem AssetGuard",
+  "description": "A comprehensive IT asset management dashboard comparing internal inventory (SAP/DB) against live endpoint status (Intune/Jamf). Features AI-powered compliance analysis.",
+  "requestFramePermissions": []
+}
