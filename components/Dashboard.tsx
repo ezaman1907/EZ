@@ -1,10 +1,8 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { DashboardStats, DashboardFilterType, Asset, DeviceType } from '../types';
-import { CheckCircle, Server, ShieldAlert, Bot, MousePointerClick, Shield, Laptop, Smartphone, Monitor, FileText, Package, AlertOctagon } from 'lucide-react';
-import { analyzeInventoryRisks } from '../services/geminiService';
-import { ReportModal } from './ReportModal';
+import { CheckCircle, Server, ShieldAlert, MousePointerClick, Shield, Laptop, Smartphone, Monitor, Package, AlertOctagon } from 'lucide-react';
 
 interface DashboardProps {
   stats: DashboardStats;
@@ -18,9 +16,6 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#6366f1'];
 const BAR_COLORS = ['#10b981', '#ef4444', '#f97316', '#6366f1']; // Compliant (Green), Intune (Red), Jamf (Orange), Defender (Indigo)
 
 export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilterSelect, onDeviceSelect }) => {
-  const [aiAnalysis, setAiAnalysis] = useState<string>('');
-  const [loadingAi, setLoadingAi] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
   
   const complianceData = [
     { name: 'Compliant', value: stats.compliantCount },
@@ -83,14 +78,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
     ];
   }, [inventory]);
 
-  const handleAiAnalysis = async () => {
-    setLoadingAi(true);
-    // Pass full inventory for detailed ratio analysis
-    const result = await analyzeInventoryRisks(inventory);
-    setAiAnalysis(result);
-    setLoadingAi(false);
-  };
-
   const handleBarClick = (data: any) => {
     if (!data || !data.name) return;
     
@@ -112,13 +99,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
 
   return (
     <div className="space-y-6">
-      {/* Report Modal */}
-      <ReportModal 
-        isOpen={showReportModal} 
-        onClose={() => setShowReportModal(false)} 
-        content={aiAnalysis} 
-      />
-
       {/* Top Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         
@@ -353,65 +333,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
                 </div>
               ))}
            </div>
-        </div>
-      </div>
-
-      {/* AI Assistant Section */}
-      <div className="bg-gradient-to-br from-red-50 to-slate-50 rounded-xl p-6 border border-red-100 shadow-sm flex flex-col justify-between">
-        <div>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="bg-white p-2.5 rounded-full shadow-sm ring-1 ring-red-100">
-              <Bot className="w-6 h-6 text-red-600" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Yapay Zeka Risk Denetçisi</h3>
-              <p className="text-sm text-slate-500 font-medium">Gemini 2.5 Flash ile güvenlik analizi.</p>
-            </div>
-          </div>
-          
-          {aiAnalysis ? (
-             <div className="bg-white p-4 rounded-lg border border-red-100 shadow-sm mb-4">
-               <p className="text-slate-600 text-sm leading-relaxed line-clamp-3">
-                  {aiAnalysis.split('\n').filter(line => line.trim() !== '' && !line.startsWith('#')).slice(0, 2).join(' ')}...
-               </p>
-             </div>
-          ) : (
-             <p className="text-sm text-slate-500 mb-6">Mevcut envanter durumunu analiz ederek C-Level raporu hazırlar.</p>
-          )}
-        </div>
-
-        <div className="flex justify-between items-center mt-auto">
-           {aiAnalysis && (
-              <button 
-                onClick={() => setShowReportModal(true)}
-                className="text-sm font-bold text-red-600 hover:text-red-700 flex items-center gap-2"
-              >
-                 <FileText className="w-4 h-4" />
-                 Raporu Görüntüle
-              </button>
-           )}
-           <button
-            onClick={handleAiAnalysis}
-            disabled={loadingAi || (aiAnalysis.length > 0)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 shadow-md flex items-center gap-2 whitespace-nowrap ml-auto
-              ${aiAnalysis.length > 0 
-                ? 'bg-emerald-600 text-white cursor-default shadow-emerald-200' 
-                : 'bg-red-600 hover:bg-red-700 text-white shadow-red-200'}`}
-           >
-            {loadingAi ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                Analiz Ediliyor...
-              </>
-            ) : aiAnalysis.length > 0 ? (
-              <>
-                <CheckCircle className="w-4 h-4" />
-                Analiz Tamamlandı
-              </>
-            ) : (
-              'Risk Analizini Başlat'
-            )}
-           </button>
         </div>
       </div>
     </div>
