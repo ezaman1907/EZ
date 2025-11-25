@@ -35,7 +35,8 @@ export const generateInternalInventory = (): Asset[] => {
       assetAgeDays: calculateAge(pDate),
       userName: `0${5000+i}`,
       fullName: `Windows User ${i}`,
-      assignedUser: `Windows User ${i}`
+      assignedUser: `Windows User ${i}`,
+      isStock: false
     });
   }
 
@@ -55,7 +56,8 @@ export const generateInternalInventory = (): Asset[] => {
       assetAgeDays: calculateAge(pDate),
       userName: `0${9000+i}`,
       fullName: `Desktop User ${i}`,
-      assignedUser: `Desktop User ${i}`
+      assignedUser: `Desktop User ${i}`,
+      isStock: false
     });
   }
 
@@ -76,7 +78,8 @@ export const generateInternalInventory = (): Asset[] => {
       assetAgeDays: calculateAge(pDate),
       userName: `0${6000+i}`,
       fullName: `Mac User ${i}`,
-      assignedUser: `Mac User ${i}`
+      assignedUser: `Mac User ${i}`,
+      isStock: false
     });
   }
 
@@ -97,7 +100,8 @@ export const generateInternalInventory = (): Asset[] => {
       assetAgeDays: calculateAge(pDate),
       userName: `0${7000+i}`,
       fullName: `Mobile User ${i}`,
-      assignedUser: `Mobile User ${i}`
+      assignedUser: `Mobile User ${i}`,
+      isStock: false
     });
   }
 
@@ -117,8 +121,30 @@ export const generateInternalInventory = (): Asset[] => {
       assetAgeDays: calculateAge(pDate),
       userName: 'N/A',
       fullName: 'N/A',
-      assignedUser: `N/A`
+      assignedUser: `N/A`,
+      isStock: false
     });
+  }
+
+  // Generate STOCK Items (Some Safe, Some Risky)
+  for (let i = 0; i < 10; i++) {
+      const pDate = getRandomDate(new Date(2023, 0, 1), new Date());
+      assets.push({
+        id: `stock-${i}`,
+        assetTag: `STK-${5000 + i}`,
+        statusDescription: 'STOK',
+        brand: 'Dell',
+        model: 'Latitude 3520',
+        hostname: `STK-LAP-${i}`,
+        serialNumber: generateSerial('STK'),
+        type: DeviceType.Notebook,
+        purchaseDate: pDate,
+        assetAgeDays: calculateAge(pDate),
+        userName: '',
+        fullName: '',
+        assignedUser: 'IT STOCK',
+        isStock: true
+      });
   }
 
   return assets;
@@ -146,21 +172,36 @@ export const simulateComplianceCheck = (inventory: Asset[]): Asset[] => {
     let inJamf = true;
     let inDefender = true;
 
-    // 10% chance missing from Intune
-    if (randomChance < 0.10) inIntune = false;
-    
-    // 15% chance missing from Jamf (if it's a PC/Mac)
-    if (randomChance < 0.15 && (asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook || asset.type === DeviceType.MacBook)) {
-      inJamf = false;
-    }
+    // Stock Logic for Mocking
+    if (asset.isStock) {
+        // 80% of stock is clean (not in cloud)
+        if (randomChance < 0.8) {
+            inIntune = false;
+            inJamf = false;
+            inDefender = false;
+        } else {
+            // 20% Risky Stock (Forgot to wipe or active)
+            inIntune = true;
+            inDefender = true;
+        }
+    } else {
+        // Normal Device Logic
+        // 10% chance missing from Intune
+        if (randomChance < 0.10) inIntune = false;
+        
+        // 15% chance missing from Jamf (if it's a PC/Mac)
+        if (randomChance < 0.15 && (asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook || asset.type === DeviceType.MacBook)) {
+          inJamf = false;
+        }
 
-    // 12% chance missing from Defender (if it's a PC/Mac)
-    if (randomChance < 0.12 && (asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook || asset.type === DeviceType.MacBook)) {
-      inDefender = false;
-    }
+        // 12% chance missing from Defender (if it's a PC/Mac)
+        if (randomChance < 0.12 && (asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook || asset.type === DeviceType.MacBook)) {
+          inDefender = false;
+        }
 
-    if (!inIntune && Math.random() > 0.3) {
-      inJamf = false;
+        if (!inIntune && Math.random() > 0.3) {
+          inJamf = false;
+        }
     }
 
     return {

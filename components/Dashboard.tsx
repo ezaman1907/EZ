@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { DashboardStats, DashboardFilterType, Asset, DeviceType } from '../types';
-import { AlertTriangle, CheckCircle, Server, ShieldAlert, Bot, MousePointerClick, Shield, Laptop, Smartphone, Monitor, FileText, ArrowRight } from 'lucide-react';
+import { CheckCircle, Server, ShieldAlert, Bot, MousePointerClick, Shield, Laptop, Smartphone, Monitor, FileText, Package, AlertOctagon } from 'lucide-react';
 import { analyzeInventoryRisks } from '../services/geminiService';
 import { ReportModal } from './ReportModal';
 
@@ -21,7 +21,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [loadingAi, setLoadingAi] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
-
+  
   const complianceData = [
     { name: 'Compliant', value: stats.compliantCount },
     { name: 'Missing Intune', value: stats.missingIntuneCount },
@@ -29,22 +29,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
     { name: 'Missing Defender', value: stats.missingDefenderCount },
   ];
 
-  // Calculate Platform Specific Ratios
+  // Calculate Platform Specific Ratios (EXCLUDING STOCK)
   const platformStats = useMemo(() => {
+    // Filter out stock items first
+    const activeInventory = inventory.filter(a => !a.isStock);
+
     // 1. Windows (Desktop + Notebook) -> Intune
-    const windowsAssets = inventory.filter(a => a.type === DeviceType.Desktop || a.type === DeviceType.Notebook);
+    const windowsAssets = activeInventory.filter(a => a.type === DeviceType.Desktop || a.type === DeviceType.Notebook);
     const winTotal = windowsAssets.length;
     const winIntune = windowsAssets.filter(a => a.compliance?.inIntune).length;
     const winRatio = winTotal > 0 ? Math.round((winIntune / winTotal) * 100) : 0;
 
     // 2. iOS (iPhone + iPad) -> Intune
-    const iosAssets = inventory.filter(a => a.type === DeviceType.iPhone || a.type === DeviceType.iPad);
+    const iosAssets = activeInventory.filter(a => a.type === DeviceType.iPhone || a.type === DeviceType.iPad);
     const iosTotal = iosAssets.length;
     const iosIntune = iosAssets.filter(a => a.compliance?.inIntune).length;
     const iosRatio = iosTotal > 0 ? Math.round((iosIntune / iosTotal) * 100) : 0;
 
     // 3. Mac (MacBook) -> Jamf
-    const macAssets = inventory.filter(a => a.type === DeviceType.MacBook);
+    const macAssets = activeInventory.filter(a => a.type === DeviceType.MacBook);
     const macTotal = macAssets.length;
     const macJamf = macAssets.filter(a => a.compliance?.inJamf).length;
     const macRatio = macTotal > 0 ? Math.round((macJamf / macTotal) * 100) : 0;
@@ -56,7 +59,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
         ratio: winRatio, 
         current: winIntune, 
         total: winTotal,
-        icon: <Laptop className="w-5 h-5 text-blue-600" />
+        icon: <Laptop className="w-5 h-5 text-blue-600" />,
+        filterType: 'Windows' // Custom filter key for both Desktop/Notebook
       },
       { 
         label: 'iOS / iPadOS', 
@@ -64,7 +68,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
         ratio: iosRatio, 
         current: iosIntune, 
         total: iosTotal,
-        icon: <Smartphone className="w-5 h-5 text-sky-500" />
+        icon: <Smartphone className="w-5 h-5 text-sky-500" />,
+        filterType: DeviceType.iPhone
       },
       { 
         label: 'macOS', 
@@ -72,7 +77,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
         ratio: macRatio, 
         current: macJamf, 
         total: macTotal,
-        icon: <Monitor className="w-5 h-5 text-slate-700" />
+        icon: <Monitor className="w-5 h-5 text-slate-700" />,
+        filterType: DeviceType.MacBook
       }
     ];
   }, [inventory]);
@@ -151,43 +157,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
             </div>
           </div>
           <p className="text-xs text-slate-400 mt-4 flex items-center gap-1">
-            Syncing
+            Active Production
             <MousePointerClick className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </p>
         </div>
 
-        {/* Missing Intune */}
+        {/* Stock Inventory (NEW) */}
         <div 
-          onClick={() => onFilterSelect('MISSING_INTUNE')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md hover:border-rose-300 transition-all group"
+          onClick={() => onFilterSelect('STOCK')}
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md hover:border-amber-300 transition-all group"
         >
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500 group-hover:text-rose-600 transition-colors">Missing Intune</p>
-              <p className="text-2xl font-bold text-rose-600 mt-1">{stats.missingIntuneCount}</p>
+              <p className="text-sm font-medium text-slate-500 group-hover:text-amber-600 transition-colors">Stock Inventory</p>
+              <p className="text-2xl font-bold text-slate-900 mt-1">{stats.stockCount}</p>
             </div>
-            <div className="p-3 bg-rose-50 rounded-lg border border-rose-100 transition-colors">
-              <AlertTriangle className="w-6 h-6 text-rose-600" />
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 transition-colors">
+              <Package className="w-6 h-6 text-amber-600" />
             </div>
           </div>
-          <p className="text-xs text-slate-400 mt-4 flex items-center gap-1">
-            Inactive
-            <MousePointerClick className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+          <p className={`text-xs mt-4 flex items-center gap-1 font-medium ${stats.riskyStockCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+             {stats.riskyStockCount > 0 ? (
+               <>
+                 <AlertOctagon className="w-3 h-3" />
+                 {stats.riskyStockCount} Active (Risky)
+               </>
+             ) : (
+                'Stock but Active'
+             )}
+             <MousePointerClick className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
           </p>
         </div>
 
         {/* Missing Jamf */}
         <div 
           onClick={() => onFilterSelect('MISSING_JAMF')}
-          className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md hover:border-amber-300 transition-all group"
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-md hover:border-red-300 transition-all group"
         >
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500 group-hover:text-amber-600 transition-colors">Missing Jamf</p>
-              <p className="text-2xl font-bold text-amber-600 mt-1">{stats.missingJamfCount}</p>
+              <p className="text-sm font-medium text-slate-500 group-hover:text-red-600 transition-colors">Missing Jamf</p>
+              <p className="text-2xl font-bold text-red-600 mt-1">{stats.missingJamfCount}</p>
             </div>
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 transition-colors">
-              <ShieldAlert className="w-6 h-6 text-amber-600" />
+            <div className="p-3 bg-red-50 rounded-lg border border-red-100 transition-colors">
+              <ShieldAlert className="w-6 h-6 text-red-600" />
             </div>
           </div>
           <p className="text-xs text-slate-400 mt-4 flex items-center gap-1">
@@ -222,14 +235,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
         <h3 className="text-lg font-bold text-slate-800 mb-6">Platform Bazlı Uyumluluk Oranları</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {platformStats.map((platform) => (
-            <div key={platform.label} className="relative">
+            <div 
+                key={platform.label} 
+                className="relative group cursor-pointer p-4 rounded-xl hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100"
+                onClick={() => onDeviceSelect(platform.filterType)}
+            >
               <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 group-hover:bg-white group-hover:shadow-sm transition-all">
                     {platform.icon}
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">{platform.label}</p>
+                    <p className="text-sm font-bold text-slate-900 group-hover:text-blue-700 transition-colors">{platform.label}</p>
                     <p className="text-xs text-slate-500">{platform.subLabel}</p>
                   </div>
                 </div>
@@ -249,7 +266,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
               
               <div className="flex justify-between mt-2 text-xs font-medium text-slate-400">
                 <span>{platform.current} / {platform.total} Cihaz</span>
-                <span>Hedef: %100</span>
+                <span className="flex items-center gap-1">
+                    Hedef: %100 
+                    <MousePointerClick className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </span>
               </div>
             </div>
           ))}
@@ -337,25 +357,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
       </div>
 
       {/* AI Assistant Section */}
-      <div className="bg-gradient-to-r from-red-50 to-slate-50 rounded-xl p-6 border border-red-100 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-             <div className="bg-white p-2.5 rounded-full shadow-sm ring-1 ring-red-100">
-               <Bot className="w-6 h-6 text-red-600" />
-             </div>
-             <div>
-               <h3 className="text-lg font-bold text-slate-900">Yapay Zeka Risk Denetçisi</h3>
-               <p className="text-sm text-slate-500 font-medium">Gemini 2.5 Flash ile güçlendirilmiş otomatik güvenlik analizi.</p>
-             </div>
+      <div className="bg-gradient-to-br from-red-50 to-slate-50 rounded-xl p-6 border border-red-100 shadow-sm flex flex-col justify-between">
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="bg-white p-2.5 rounded-full shadow-sm ring-1 ring-red-100">
+              <Bot className="w-6 h-6 text-red-600" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Yapay Zeka Risk Denetçisi</h3>
+              <p className="text-sm text-slate-500 font-medium">Gemini 2.5 Flash ile güvenlik analizi.</p>
+            </div>
           </div>
-          <button
+          
+          {aiAnalysis ? (
+             <div className="bg-white p-4 rounded-lg border border-red-100 shadow-sm mb-4">
+               <p className="text-slate-600 text-sm leading-relaxed line-clamp-3">
+                  {aiAnalysis.split('\n').filter(line => line.trim() !== '' && !line.startsWith('#')).slice(0, 2).join(' ')}...
+               </p>
+             </div>
+          ) : (
+             <p className="text-sm text-slate-500 mb-6">Mevcut envanter durumunu analiz ederek C-Level raporu hazırlar.</p>
+          )}
+        </div>
+
+        <div className="flex justify-between items-center mt-auto">
+           {aiAnalysis && (
+              <button 
+                onClick={() => setShowReportModal(true)}
+                className="text-sm font-bold text-red-600 hover:text-red-700 flex items-center gap-2"
+              >
+                 <FileText className="w-4 h-4" />
+                 Raporu Görüntüle
+              </button>
+           )}
+           <button
             onClick={handleAiAnalysis}
             disabled={loadingAi || (aiAnalysis.length > 0)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 shadow-md flex items-center gap-2 whitespace-nowrap
-               ${aiAnalysis.length > 0 
-                 ? 'bg-emerald-600 text-white cursor-default shadow-emerald-200' 
-                 : 'bg-red-600 hover:bg-red-700 text-white shadow-red-200'}`}
-          >
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 shadow-md flex items-center gap-2 whitespace-nowrap ml-auto
+              ${aiAnalysis.length > 0 
+                ? 'bg-emerald-600 text-white cursor-default shadow-emerald-200' 
+                : 'bg-red-600 hover:bg-red-700 text-white shadow-red-200'}`}
+           >
             {loadingAi ? (
               <>
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
@@ -369,28 +411,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, inventory, onFilter
             ) : (
               'Risk Analizini Başlat'
             )}
-          </button>
+           </button>
         </div>
-        
-        {aiAnalysis && (
-          <div className="mt-6 animate-fadeIn">
-             <div className="bg-white p-5 rounded-lg border border-red-100 shadow-sm mb-4">
-                 <p className="text-slate-600 text-sm leading-relaxed line-clamp-3">
-                    {aiAnalysis.split('\n').filter(line => line.trim() !== '' && !line.startsWith('#')).slice(0, 2).join(' ')}...
-                 </p>
-             </div>
-             <div className="flex justify-end">
-                <button 
-                  onClick={() => setShowReportModal(true)}
-                  className="group flex items-center gap-2 text-sm font-bold text-red-600 hover:text-red-700 bg-white hover:bg-red-50 px-4 py-2 rounded-lg border border-red-100 transition-all shadow-sm"
-                >
-                   <FileText className="w-4 h-4" />
-                   View Full Report
-                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </button>
-             </div>
-          </div>
-        )}
       </div>
     </div>
   );

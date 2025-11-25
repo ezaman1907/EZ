@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Asset, DeviceType, DashboardFilterType } from '../types';
 import { StatusBadge } from './StatusBadge';
-import { Search, Filter, Monitor, Laptop, Smartphone, Cpu, Tag, AlertCircle, PcCase, Tablet, XCircle, Calendar, ChevronDown, Check, User } from 'lucide-react';
+import { Search, Filter, Monitor, Laptop, Smartphone, Cpu, Tag, AlertCircle, PcCase, Tablet, XCircle, Check, User, Package, AlertOctagon, Download } from 'lucide-react';
 
 interface InventoryTableProps {
   data: Asset[];
@@ -75,28 +75,39 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
     const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
     
-    // 1. Dashboard Filter Logic (Pre-existing)
+    // 1. Dashboard Filter Logic
     if (dashboardFilter === 'COMPLIANT') {
+      if (asset.isStock) return false; // Exclude stock from Compliant view
       if (isMac) {
         if (!asset.compliance?.inJamf || !asset.compliance?.inDefender) return false;
       } else if (isComputer || isMobile) {
         if (!asset.compliance?.inIntune || !asset.compliance?.inDefender) return false;
       }
     } else if (dashboardFilter === 'MISSING_INTUNE') {
+      if (asset.isStock) return false; // Exclude stock from Missing views
       if (isMac) return false;
       if (asset.compliance?.inIntune) return false;
     } else if (dashboardFilter === 'MISSING_JAMF') {
+      if (asset.isStock) return false; // Exclude stock
       if (asset.type !== DeviceType.MacBook) return false; 
       if (asset.compliance?.inJamf) return false;
     } else if (dashboardFilter === 'MISSING_DEFENDER') {
+      if (asset.isStock) return false; // Exclude stock
       const allowedTypes = [DeviceType.MacBook, DeviceType.Desktop, DeviceType.Notebook, DeviceType.iPhone, DeviceType.iPad];
       if (!allowedTypes.includes(asset.type)) return false;
       if (asset.compliance?.inDefender) return false;
+    } else if (dashboardFilter === 'STOCK') {
+      if (!asset.isStock) return false;
     }
 
     // 2. Device Category Filter (Pre-existing)
     if (deviceFilter !== 'All') {
-        if (deviceFilter === DeviceType.iPhone) {
+        if (deviceFilter === 'STOCK') {
+            if (!asset.isStock) return false;
+        } else if (deviceFilter === 'Windows') {
+             // Show both Desktop and Notebook for Windows filter
+             if (asset.type !== DeviceType.Desktop && asset.type !== DeviceType.Notebook) return false;
+        } else if (deviceFilter === DeviceType.iPhone) {
              if (asset.type !== DeviceType.iPhone && asset.type !== DeviceType.iPad) return false;
         } else {
              if (asset.type !== deviceFilter) return false;
@@ -131,6 +142,83 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     return true;
   });
 
+  // --- Export CSV Logic ---
+  const handleExportFilteredData = () => {
+    if (filteredData.length === 0) return;
+
+    // Define Headers
+    const headers = [
+      'Referans No', 
+      'Seri No', 
+      'Hostname', 
+      'Marka', 
+      'Model', 
+      'Cihaz Tipi', 
+      'Kullanıcı', 
+      'Durum', 
+      'Stok Mu?', 
+      'Intune (Windows/Mobil)', 
+      'Jamf (macOS)', 
+      'Defender (Koruma)'
+    ];
+
+    // Helper to escape CSV fields
+    const escapeCsv = (field: any) => {
+      const str = String(field || '');
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    // Map Data
+    const rows = filteredData.map(asset => {
+      return [
+        asset.assetTag,
+        asset.serialNumber,
+        asset.hostname,
+        asset.brand || '',
+        asset.model || '',
+        asset.type,
+        asset.assignedUser || '',
+        asset.statusDescription || '',
+        asset.isStock ? 'EVET' : 'HAYIR',
+        asset.compliance?.inIntune ? 'VAR' : 'YOK',
+        asset.compliance?.inJamf ? 'VAR' : 'YOK',
+        asset.compliance?.inDefender ? 'VAR' : 'YOK'
+      ];
+    });
+
+    // Combine Headers and Rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(escapeCsv).join(','))
+    ].join('\n');
+
+    // Create Blob with BOM for Excel compatibility
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    // Generate Filename based on filters
+    let filename = 'AssetGuard_Listesi.csv';
+    if (dashboardFilter !== 'ALL') {
+        filename = `AssetGuard_${dashboardFilter}.csv`;
+    } else if (deviceFilter !== 'All') {
+        filename = `AssetGuard_${deviceFilter.replace(/\s/g, '')}.csv`;
+    }
+
+    // Trigger Download
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   // --- Helpers for Dropdowns ---
   const getUniqueValues = (key: keyof Asset) => {
     const values = new Set<string>();
@@ -138,7 +226,11 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
        // Apply Device Filter basic logic
        let typeMatch = true;
        if (deviceFilter !== 'All') {
-          if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
+          if (deviceFilter === 'STOCK') typeMatch = item.isStock;
+          else if (deviceFilter === 'Windows') {
+             typeMatch = (item.type === DeviceType.Desktop || item.type === DeviceType.Notebook);
+          }
+          else if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
           else typeMatch = item.type === deviceFilter;
        }
        
@@ -155,7 +247,11 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     data.forEach(item => {
        let typeMatch = true;
        if (deviceFilter !== 'All') {
-          if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
+          if (deviceFilter === 'STOCK') typeMatch = item.isStock;
+          else if (deviceFilter === 'Windows') {
+             typeMatch = (item.type === DeviceType.Desktop || item.type === DeviceType.Notebook);
+          }
+          else if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
           else typeMatch = item.type === deviceFilter;
        }
        
@@ -187,6 +283,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
       case 'MISSING_INTUNE': return 'Showing: Devices Missing from Intune';
       case 'MISSING_JAMF': return 'Showing: MacBooks Missing from Jamf';
       case 'MISSING_DEFENDER': return 'Showing: Devices Missing from Defender';
+      case 'STOCK': return 'Showing: Stock Inventory';
       default: return null;
     }
   };
@@ -212,7 +309,17 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
       {/* Controls */}
       <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/30">
-        <h3 className="text-lg font-bold text-slate-800">Inventory Database</h3>
+        <div className="flex items-center gap-4">
+            <h3 className="text-lg font-bold text-slate-800">Inventory Database</h3>
+            <button 
+                onClick={handleExportFilteredData}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 shadow-sm transition-all"
+                title="Görüntülenen listeyi Excel (CSV) olarak indir"
+            >
+                <Download className="w-3.5 h-3.5" />
+                Listeyi İndir (.csv)
+            </button>
+        </div>
         
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative">
@@ -238,6 +345,8 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               onChange={(e) => onDeviceFilterChange(e.target.value)}
             >
               <option value="All">All Devices</option>
+              <option value="Windows">Windows (All)</option>
+              <option value="STOCK">Stock Inventory</option>
               <option value={DeviceType.Desktop}>Desktop</option>
               <option value={DeviceType.Notebook}>Notebook</option>
               <option value={DeviceType.MacBook}>MacBook</option>
@@ -401,28 +510,50 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                  const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
                  const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
 
-                 // Highlight row slightly if filtering for compliance
-                 const rowClass = (dashboardFilter === 'COMPLIANT') 
-                    ? "bg-emerald-50/20 hover:bg-emerald-50/40 transition-colors" 
-                    : "hover:bg-slate-50 transition-colors";
+                 // Determine Row Class
+                 let rowClass = "hover:bg-slate-50 transition-colors";
+                 
+                 // Highlight Active Stock (Yellow)
+                 const isRiskyStock = asset.isStock && (asset.compliance?.inIntune || asset.compliance?.inJamf);
+                 if (isRiskyStock) {
+                     rowClass = "bg-orange-50 hover:bg-orange-100 transition-colors shadow-sm";
+                 } 
+                 // Highlight Compliant Filter
+                 else if (dashboardFilter === 'COMPLIANT') {
+                     rowClass = "bg-emerald-50/20 hover:bg-emerald-50/40 transition-colors";
+                 }
 
                  return (
                   <tr key={asset.id} className={rowClass}>
                     {/* Device (Ref / Status) */}
                     <td className="px-6 py-4 relative">
                       <div className="flex items-start">
-                        <div className="flex-shrink-0 h-10 w-10 bg-slate-100 rounded-lg border border-slate-200 flex items-center justify-center mt-1">
-                          {getDeviceIcon(asset.type)}
+                        <div className={`flex-shrink-0 h-10 w-10 rounded-lg border flex items-center justify-center mt-1 ${
+                            isRiskyStock 
+                                ? 'bg-orange-100 border-orange-200 text-orange-600' 
+                                : asset.isStock 
+                                    ? 'bg-amber-100 border-amber-200 text-amber-600' 
+                                    : 'bg-slate-100 border-slate-200 text-slate-600'
+                        }`}>
+                          {asset.isStock ? <Package className="w-5 h-5" /> : getDeviceIcon(asset.type)}
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-bold text-slate-900 flex items-center gap-1">
-                            <Tag className="w-3 h-3 text-slate-400" />
+                          <div className={`text-sm font-bold flex items-center gap-1.5 ${isRiskyStock ? 'text-orange-900' : 'text-slate-900'}`}>
+                            {isRiskyStock ? (
+                                <AlertOctagon className="w-4 h-4 text-orange-600" />
+                            ) : (
+                                <Tag className="w-3.5 h-3.5 text-slate-400" />
+                            )}
                             {asset.assetTag}
                           </div>
-                          {asset.statusDescription && (
-                             <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                               <AlertCircle className="w-3 h-3" />
-                               {asset.statusDescription}
+                          <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                            <AlertCircle className="w-3 h-3" />
+                            {asset.statusDescription || 'Unknown Status'}
+                          </div>
+                          {isRiskyStock && (
+                             <div className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800 border border-orange-200">
+                                <AlertOctagon className="w-3 h-3 mr-1" />
+                                Risky Stock
                              </div>
                           )}
                         </div>
@@ -433,12 +564,6 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-slate-900">{asset.brand || '-'}</div>
                       <div className="text-xs text-slate-500">{asset.model || '-'}</div>
-                      {asset.assetAgeDays !== undefined && (
-                        <div className="flex items-center gap-1 mt-1.5 text-xs font-medium text-slate-500 bg-slate-100 w-fit px-2 py-0.5 rounded">
-                           <Calendar className="w-3 h-3 text-slate-400" />
-                           {asset.assetAgeDays} days old
-                        </div>
-                      )}
                     </td>
 
                     {/* Details (Serial / User Name / Full Name) */}
@@ -469,6 +594,8 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                           present={asset.compliance?.inIntune || false} 
                           label="Intune" 
                           type="intune" 
+                          complianceState={asset.compliance?.intuneComplianceState}
+                          lastCheckInDays={asset.compliance?.intuneLastCheckInDays}
                         />
                       ) : <span className="text-xs text-slate-300 font-medium px-2 text-center block w-fit">N/A</span>}
                     </td>
