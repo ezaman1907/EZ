@@ -2,16 +2,21 @@
 import { GoogleGenAI } from "@google/genai";
 import { Asset, DeviceType } from "../types";
 
+/**
+ * Analyze inventory risks using Gemini AI.
+ * Generates a comprehensive risk report for C-level management.
+ */
 export const analyzeInventoryRisks = async (inventory: Asset[]): Promise<string> => {
   try {
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-      return "API Anahtarı eksik. Lütfen AI analizi için API anahtarını yapılandırın.";
+      return "API Anahtarı eksik. Lütfen AI analizi için API anahtarından emin olun.";
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    // Initialize with direct access to process.env.API_KEY
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // 1. Calculate Specific Segment Stats
+    // 1. Calculate Specific Segment Stats for AI Context
     const windowsAssets = inventory.filter(a => a.type === DeviceType.Desktop || a.type === DeviceType.Notebook);
     const iosAssets = inventory.filter(a => a.type === DeviceType.iPhone || a.type === DeviceType.iPad);
     const macAssets = inventory.filter(a => a.type === DeviceType.MacBook);
@@ -58,11 +63,13 @@ export const analyzeInventoryRisks = async (inventory: Asset[]): Promise<string>
       Not: Başlıklar için ### kullan. Önemli kısımları **kalın** yaz. Çıktı Türkçe olsun.
     `;
 
+    // Use recommended model for basic text analysis tasks
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 
+    // Directly access the text property as per latest SDK guidelines
     return response.text || "Analiz tamamlandı ancak metin döndürülemedi.";
   } catch (error) {
     console.error("Gemini AI Error:", error);

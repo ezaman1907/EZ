@@ -9,8 +9,6 @@ const readFile = (file: File): Promise<any[]> => {
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        // raw: false forces parsing of dates and numbers to strings where possible
-        // cellDates: true ensures dates are parsed as Date objects if formatted as such in Excel
         const workbook = read(data, { type: 'array', cellDates: true });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
@@ -25,29 +23,42 @@ const readFile = (file: File): Promise<any[]> => {
   });
 };
 
-// Fuzzy key matcher to find columns with Turkish locale support
+// Seri numarasını eşleştirme için temizleyen fonksiyon
+const normalizeIdentifier = (val: string): string => {
+  if (!val) return '';
+  return String(val)
+    .replace(/^(s\/n[:\s]+|seri[:\s]+|sn[:\s]+)/i, '') // S/N:, Seri: gibi ekleri temizle
+    .trim()
+    .toLowerCase();
+};
+
+/**
+ * iPhone/iPad cihazlarda seri numarasının başındaki hatalı 'S' harfini temizler
+ * Örnek: SV22P3H6YY3 -> V22P3H6YY3
+ */
+const cleanAppleMobileSerial = (serial: string, type: DeviceType): string => {
+  if (!serial) return '';
+  const s = serial.trim();
+  if ((type === DeviceType.iPhone || type === DeviceType.iPad) && 
+      (s.startsWith('S') || s.startsWith('s')) && 
+      s.length >= 10) {
+    return s.substring(1);
+  }
+  return s;
+};
+
 const getValue = (row: any, possibleKeys: string[]): string => {
   const rowKeys = Object.keys(row);
-  
   for (const key of possibleKeys) {
-    // Use Turkish locale for lowercasing to handle I/ı/İ/i correctly
     const searchKey = key.toLocaleLowerCase('tr').trim();
-    
     const foundKey = rowKeys.find(k => {
         const rowKey = k.toLocaleLowerCase('tr').trim();
-        // Check exact match or if the row key contains the search term
-        // e.g. "Personel Tam İsim" should match "tam isim"
         return rowKey === searchKey || rowKey.includes(searchKey);
     });
-
     if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) {
       const val = row[foundKey];
-      // Handle empty strings even if key matches
       if (typeof val === 'string' && val.trim() === '') return '';
-
-      // Handle Excel Date Objects
       if (val instanceof Date) {
-        // Adjust for timezone offset if necessary, but simple ISO split is usually enough for dates
         const date = new Date(val.getTime() - (val.getTimezoneOffset() * 60000));
         return date.toISOString().split('T')[0];
       }
@@ -57,103 +68,64 @@ const getValue = (row: any, possibleKeys: string[]): string => {
   return '';
 };
 
-// Helper to calculate days difference
 const calculateDaysDiff = (dateStr: string | Date): number | undefined => {
     if (!dateStr) return undefined;
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return undefined;
-    
     const today = new Date();
     const diffTime = Math.abs(today.getTime() - date.getTime());
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
-// Helper to format user full name into Defender device naming pattern
-const formatNameForDefender = (fullName: string): string => {
-  let clean = fullName.toLocaleLowerCase('tr')
-    .replace(/ğ/g, 'g')
-    .replace(/ü/g, 'u')
-    .replace(/ş/g, 's')
-    .replace(/ı/g, 'i')
-    .replace(/i̇/g, 'i')
-    .replace(/ö/g, 'o')
-    .replace(/ç/g, 'c');
-
-  clean = clean.replace(/[^a-z0-9\s]/g, '');
-  const parts = clean.trim().split(/\s+/);
-  if (parts.length < 2) return parts[0] || '';
-  const lastName = parts.pop();
-  const firstNames = parts.join(''); 
-  return `${firstNames}_${lastName}`;
-};
-
-// Normalize device type based on Brand/Model/Type AND Status
 const determineType = (brand: string, model: string, rawType: string, status: string): DeviceType => {
-  const combined = `${brand || ''} ${model || ''} ${rawType || ''} ${status || ''}`.toLocaleLowerCase('tr');
+  const b = (brand || '').toLocaleLowerCase('tr');
+  const m = (model || '').toLocaleLowerCase('tr');
+  const t = (rawType || '').toLocaleLowerCase('tr');
+  const s = (status || '').toLocaleLowerCase('tr');
+  const combined = `${b} ${m} ${t} ${s}`;
+
+  if (combined.includes('ipad') || combined.includes('ıpad') || combined.includes('tablet')) return DeviceType.iPad;
+  if (combined.includes('iphone') || combined.includes('ıphone') || combined.includes('mobile')) return DeviceType.iPhone;
   
-  if (combined.includes('ipad') || combined.includes('ıpad') || combined.includes('tablet')) {
-    return DeviceType.iPad;
-  }
-
-  if (
-    combined.includes('iphone') || combined.includes('ıphone') || 
-    combined.includes('ios') || combined.includes('ıos') || 
-    combined.includes('telefon') || combined.includes('phone') || 
-    combined.includes('mobile')
-  ) {
-    return DeviceType.iPhone;
-  }
-  
-  if (combined.includes('macbook') || combined.includes('imac') || combined.includes('mac mini') || combined.includes('mac studio') || combined.includes('mac pro') || combined.includes('osx') || combined.includes('macos')) {
-    return DeviceType.MacBook;
-  }
-
-  if (combined.includes('monitor') || combined.includes('display') || combined.includes('screen') || combined.includes('ekran')) {
-     if (!combined.includes('latitude') && !combined.includes('thinkpad') && !combined.includes('mac')) {
-        return DeviceType.Monitor;
-     }
-  }
-
-  const notebookKeywords = [
-    'laptop', 'notebook', 'dizüstü', 'portable', 'latitude', 'thinkpad', 'elitebook', 'probook', 
-    'yoga', 'surface', 'xps', 'zenbook', 'spectre', 'air', 'book'
-  ];
-  if (notebookKeywords.some(k => combined.includes(k))) {
-    return DeviceType.Notebook;
-  }
-
-  const desktopKeywords = [
-    'desktop', 'tower', 'masaüstü', 'optiplex', 'precision', 'prodesk', 'elitedesk', 
-    'inspiron dt', 'veriton', 'esprimo', 'workstation', 'all-in-one', 'aio', 'kasa', 'pc'
-  ];
-  if (desktopKeywords.some(k => combined.includes(k))) {
-    return DeviceType.Desktop;
-  }
-  
-  if (combined.includes('apple')) {
-      const iphoneModelRegex = /\b(1[1-9][a-z]?|se|x|xr|xs|mini|plus|max|pro|6s?|7|8|16e)\b/;
-      if (iphoneModelRegex.test(combined)) {
-          if (!combined.includes('ssd') && !combined.includes('tb') && !combined.includes('m1') && !combined.includes('m2') && !combined.includes('m3')) {
-               return DeviceType.iPhone;
-          }
-          if (/\b\d{2,3}gb\b/.test(combined)) {
-              return DeviceType.iPhone;
-          }
-      }
+  if (combined.includes('macbook') || combined.includes('macos') || combined.includes('imac')) return DeviceType.MacBook;
+  if (b.includes('apple') && (combined.includes('notebook') || combined.includes('laptop') || combined.includes('air') || combined.includes('pro'))) {
       return DeviceType.MacBook;
   }
+
+  if (combined.includes('monitor') || combined.includes('display')) {
+     if (!combined.includes('latitude') && !combined.includes('thinkpad')) return DeviceType.Monitor;
+  }
+  
+  const notebookKeywords = ['laptop', 'notebook', 'dizüstü', 'latitude', 'thinkpad', 'precision', 'vostro'];
+  if (notebookKeywords.some(k => combined.includes(k))) return DeviceType.Notebook;
+  
+  const desktopKeywords = ['desktop', 'masaüstü', 'optiplex', 'kasa', 'pc', 'tower', 'workstation'];
+  if (desktopKeywords.some(k => combined.includes(k))) return DeviceType.Desktop;
+  
+  if (b.includes('apple')) return DeviceType.iPhone;
   
   return DeviceType.Notebook;
 };
 
-// Define return type including report counts
+export const SPECIAL_EXEMPTIONS = [
+    'C02K13QZQ6L4', 
+    'C02K13QRQ6L4', 
+    'K2WP0696DG', 
+    'QGGJ7YQMNW', 
+    'FVFGK5C1Q05N'
+];
+
+export const SPECIAL_EXEMPT_USERS: string[] = [
+  'MEHMET ALİ AKARCA',
+  'AHMET BARIŞ DÜZENLI',
+  'CÜNEYT ÖZDİLEK',
+  'EVREN DERECI'
+];
+
 interface ProcessResult {
   assets: Asset[];
-  cloudCounts: {
-    intune: number;
-    jamf: number;
-    defender: number;
-  };
+  orphans: Asset[];
+  cloudCounts: { intune: number; jamf: number; defender: number; };
 }
 
 export const processFiles = async (
@@ -162,247 +134,277 @@ export const processFiles = async (
   jamfFile: File | null,
   defenderFile: File | null
 ): Promise<ProcessResult> => {
-  if (!inventoryFile) throw new Error("Inventory file is required");
+   if (!inventoryFile) throw new Error("Envanter dosyası zorunludur");
+   
+   const rawInventory = await readFile(inventoryFile);
+   let intuneData: any[] = [];
+   if (intuneFile) intuneData = await readFile(intuneFile);
+   let jamfData: any[] = [];
+   if (jamfFile) jamfData = await readFile(jamfFile);
+   let defenderData: any[] = [];
+   if (defenderFile) defenderData = await readFile(defenderFile);
 
-  // 1. Parse Inventory
-  const rawInventory = await readFile(inventoryFile);
-  
-  const assets: Asset[] = rawInventory.map((row, index) => {
-    let assetTag = getValue(row, ['referans numarası', 'referans', 'asset tag', 'demirbaş no', 'tag']);
-    const statusDesc = getValue(row, ['durum açıklama', 'durum açıklam', 'durum']);
-    const brand = getValue(row, ['marka', 'brand', 'üretici']);
-    const model = getValue(row, ['model', 'model adı', 'ürün', 'ürün adı']);
-    const serial = getValue(row, ['seri numarası', 'seri', 'seri no', 'serial number', 'serial', 's/n']);
-    let userName = getValue(row, ['kullanıcı adı', 'kullanıcı', 'username', 'sicil', 'sicil no']);
-    const fullName = getValue(row, ['tam isim', 'isim', 'ad soyad', 'adı soyadı', 'personel adı', 'fullname']);
-    const rawCategory = getValue(row, ['tip', 'tür', 'cins', 'kategori', 'category', 'type', 'device type']);
-    const usageType = getValue(row, ['kullanım tipi', 'usage type', 'kullanim tipi', 'kullanım']);
-    
-    if (userName && (userName.startsWith('248') || userName.startsWith('969'))) {
-       userName = '0' + userName;
-    }
+   const matchedSerials = new Set<string>();
+   const matchedHostnames = new Set<string>();
 
-    const type = determineType(brand, model, rawCategory, statusDesc);
+   // 1. Process Inventory
+   const assets: Asset[] = rawInventory.map((row, index) => {
+      let assetTag = getValue(row, ['referans numarası', 'referans', 'asset tag', 'demirbaş no', 'tag']);
+      const statusDesc = getValue(row, ['durum açıklama', 'durum']);
+      const brand = getValue(row, ['marka', 'brand']);
+      const model = getValue(row, ['model']);
+      const rawSerial = getValue(row, ['seri numarası', 'seri', 'serial', 'serial number']);
+      let userName = getValue(row, ['kullanıcı adı', 'sicil', 'username']);
+      const fullName = getValue(row, ['tam isim', 'isim', 'fullname', 'kullanıcı']);
+      const rawCategory = getValue(row, ['tip', 'tür', 'type', 'kategori']);
+      const usageType = getValue(row, ['kullanım tipi', 'usage type']);
+      
+      if (userName && (userName.startsWith('248') || userName.startsWith('969'))) userName = '0' + userName;
+      const type = determineType(brand, model, rawCategory, statusDesc);
 
-    const isStock = usageType.toLowerCase().includes('stok') || 
-                    usageType.toLowerCase().includes('stock') || 
-                    usageType.toLowerCase().includes('depo') ||
-                    statusDesc.toLowerCase().includes('stok') ||
-                    statusDesc.toLowerCase().includes('stock');
+      const serial = cleanAppleMobileSerial(rawSerial, type);
 
-    // --- CUSTOM ASSET TAG LOGIC ---
+      const isStock = usageType.toLowerCase().includes('stok') || statusDesc.toLowerCase().includes('stok');
+      const isDepartment = usageType.toLowerCase().includes('departman') || (userName && userName.startsWith('03160185'));
+      
+      const normSerial = normalizeIdentifier(serial);
+      const isSerialExempt = SPECIAL_EXEMPTIONS.some(ex => normalizeIdentifier(ex) === normSerial);
 
-    // Special Logic for MacBooks: Always prefix Serial with KSN (as per user request)
-    if (type === DeviceType.MacBook && serial) {
-        // Strip existing KSN if present to avoid duplication
-        const cleanSerial = serial.replace(/^KSN/i, '').trim();
-        assetTag = `KSN${cleanSerial}`;
-    }
-    // Logic for iPhones/iPads: Use Serial as Asset Tag if missing
-    else if ((type === DeviceType.iPhone || type === DeviceType.iPad) && serial) {
-         if (!assetTag || assetTag.trim() === '') {
-            assetTag = serial;
-         }
-    }
-    // Logic for Notebooks: Fallback to KSN+Serial if tag is missing
-    else if (type === DeviceType.Notebook && (!assetTag || assetTag.trim() === '' || assetTag.toUpperCase().startsWith('UNK'))) {
-        if (serial) {
-             assetTag = `KSN${serial}`;
-        }
-    }
-    // Logic for numeric-only tags: Add KSN prefix
-    else if ((type === DeviceType.Notebook || type === DeviceType.Desktop) && assetTag) {
-        if (/^\d+$/.test(assetTag.trim())) {
-            assetTag = `KSN${assetTag.trim()}`;
-        }
-    }
+      const normalizedUser = (fullName || '').toLocaleLowerCase('tr');
+      const isUserExempt = SPECIAL_EXEMPT_USERS.some(u => normalizedUser.includes(u.toLocaleLowerCase('tr')));
 
-    const assignedUser = fullName || userName || 'Unassigned';
-    let date = getValue(row, ['demirbaş yaşı', 'tarih', 'purchase date']);
-    if (!date) date = new Date().toISOString();
-    
-    const purchaseDateObj = new Date(date);
-    const today = new Date();
-    const diffTime = Math.abs(today.getTime() - purchaseDateObj.getTime());
-    const assetAgeDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const isExempt = isSerialExempt || isUserExempt;
 
-    const hostname = getValue(row, ['hostname', 'device name', 'bilgisayar adı']) || assetTag || `Unknown-${index}`;
+      if (type === DeviceType.MacBook && serial) assetTag = `KSN${serial.replace(/^KSN/i, '').trim()}`;
+      else if ((type === DeviceType.iPhone || type === DeviceType.iPad) && serial && !assetTag) assetTag = serial;
+      else if (type === DeviceType.Notebook && !assetTag && serial) assetTag = `KSN${serial}`;
+      
+      const hostname = getValue(row, ['hostname', 'device name', 'bilgisayar adı']) || assetTag || `Unknown-${index}`;
+      
+      if (normSerial) matchedSerials.add(normSerial);
+      if (hostname) matchedHostnames.add(hostname.toLowerCase().trim());
 
-    return {
-      id: `asset-${index}`,
-      assetTag: assetTag || `UNK-${index}`,
-      statusDescription: statusDesc,
-      brand: brand,
-      model: model,
-      hostname: hostname,
-      serialNumber: serial || `SN-${index}`,
-      type: type, 
-      purchaseDate: date,
-      assetAgeDays: assetAgeDays,
-      userName: userName,
-      fullName: fullName,
-      assignedUser: assignedUser,
-      isStock: isStock,
-      compliance: {
-        inIntune: false,
-        inJamf: false,
-        inDefender: false
-      }
-    };
-  });
-
-  // 2. Parse Intune (Management)
-  const intuneData = new Map<string, { hostname: string, complianceState: string, lastContact: string }>();
-  const intuneSerialToHostMap = new Map<string, string>();
-  
-  // Track counts
-  let intuneCount = 0;
-  let jamfCount = 0;
-  let defenderCount = 0;
-
-  if (intuneFile) {
-    const rawIntune = await readFile(intuneFile);
-    intuneCount = rawIntune.length;
-
-    rawIntune.forEach(row => {
-      const host = getValue(row, ['device name', 'name', 'hostname', 'cihaz adı']);
-      const serial = getValue(row, ['serial', 'serial number', 'imei', 'seri numarası', 'seri no']);
-      const assetTag = getValue(row, ['asset tag', 'demirbaş no', 'reference']);
-      const compliance = getValue(row, ['compliance state', 'uyumluluk durumu', 'complianceStatus', 'state']);
-      const lastContact = getValue(row, ['last check-in', 'last contact', 'son iletişim', 'last sync', 'son görülme']);
-
-      const details = {
-          hostname: host ? host.toLowerCase() : '',
-          complianceState: compliance || 'Unknown',
-          lastContact: lastContact
+      return {
+        id: `asset-${index}`,
+        assetTag: assetTag || `UNK-${index}`,
+        statusDescription: statusDesc,
+        brand, model, hostname,
+        serialNumber: serial || `SN-${index}`,
+        type, 
+        purchaseDate: new Date().toISOString(),
+        assetAgeDays: 0,
+        userName, fullName,
+        assignedUser: fullName || userName || 'Unassigned',
+        isStock, 
+        isDepartment,
+        isExempt,
+        compliance: { inIntune: false, inJamf: false, inDefender: false }
       };
+   });
 
-      if (host) {
-          intuneData.set(host.toLowerCase(), details);
-      }
-      if (serial) {
-          intuneData.set(serial.toLowerCase(), details);
-          intuneSerialToHostMap.set(serial.toLowerCase(), host ? host.toLowerCase() : '');
-      }
-      if (assetTag) {
-          intuneData.set(assetTag.toLowerCase(), details);
-      }
-    });
-  }
+   // 2. Build Cloud Maps (Intune)
+   const intuneMap = new Map<string, any>();
+   const intuneSerialToHost = new Map<string, string>();
+   
+   intuneData.forEach(row => {
+       const host = getValue(row, ['device name', 'hostname', 'devicename', 'displayname']);
+       const rawSerial = getValue(row, ['serial', 'imei', 'serial number', 'serialnumber', 'device serial number']);
+       
+       const model = getValue(row, ['model']).toLowerCase();
+       const os = getValue(row, ['operating system', 'os']).toLowerCase();
+       const probableType = (model.includes('iphone') || model.includes('ipad') || os.includes('ios')) ? DeviceType.iPhone : DeviceType.Other;
+       const serial = cleanAppleMobileSerial(rawSerial, probableType);
 
-  // 3. Parse Jamf
-  let jamfDevices: Set<string> = new Set();
-  if (jamfFile) {
-    const rawJamf = await readFile(jamfFile);
-    jamfCount = rawJamf.length;
+       const complianceState = getValue(row, ['compliance', 'compliance state', 'status']);
+       const lastContact = getValue(row, ['last contact', 'last check-in', 'last sync', 'last successfull scan']);
+       
+       const details = { hostname: host, complianceState, lastContact, raw: row };
+       
+       if (host) intuneMap.set(host.toLowerCase().trim(), details);
+       if (serial) {
+           const nSerial = normalizeIdentifier(serial);
+           intuneMap.set(nSerial, details);
+           if (host) intuneSerialToHost.set(nSerial, host.toLowerCase().trim());
+       }
+   });
 
-    rawJamf.forEach(row => {
-      const host = getValue(row, ['device name', 'name', 'hostname', 'bilgisayar adı', 'cihaz adı']);
-      const serial = getValue(row, ['serial', 'serial number', 'seri numarası', 'seri no', 's/n', 'imei']);
-      const assetTag = getValue(row, ['asset tag', 'demirbaş no', 'demirbaş', 'tag']);
-      
-      if (host) jamfDevices.add(host.toLowerCase());
-      if (serial) jamfDevices.add(serial.toLowerCase());
-      if (assetTag) jamfDevices.add(assetTag.toLowerCase());
-    });
-  }
+   // 3. Build Cloud Maps (Jamf)
+   const jamfMap = new Map<string, any>();
+   jamfData.forEach(row => {
+       const host = getValue(row, ['computer name', 'hostname', 'display name', 'computername']);
+       const serial = getValue(row, ['serial', 'serial number', 'serialnumber']);
+       if (host) jamfMap.set(host.toLowerCase().trim(), row);
+       if (serial) jamfMap.set(normalizeIdentifier(serial), row);
+   });
 
-  // 4. Parse Defender
-  let defenderDevices: Set<string> = new Set();
-  if (defenderFile) {
-    const rawDefender = await readFile(defenderFile);
-    defenderCount = rawDefender.length;
+   // 4. Build Cloud Maps (Defender)
+   const defenderMap = new Map<string, any>();
+   defenderData.forEach(row => {
+       const host = getValue(row, ['device name', 'hostname', 'computer name', 'devicename']);
+       if (host) defenderMap.set(host.toLowerCase().trim(), row);
+   });
 
-    rawDefender.forEach(row => {
-      const host = getValue(row, ['device name', 'devicename', 'hostname', 'bilgisayar adı', 'cihaz adı']);
-      const serial = getValue(row, ['serial', 'serial number', 'seri numarası', 'seri no', 's/n']); 
-      const assetTag = getValue(row, ['asset tag', 'demirbaş no']);
-      const user = getValue(row, ['isim_soyisim', 'isim soyisim', 'user', 'username', 'kullanıcı']);
-      
-      if (host) defenderDevices.add(host.toLowerCase());
-      if (serial) defenderDevices.add(serial.toLowerCase());
-      if (assetTag) defenderDevices.add(assetTag.toLowerCase());
-      if (user) defenderDevices.add(user.toLowerCase());
-    });
-  }
+   // 5. Match Assets
+   const mappedAssets = assets.map(asset => {
+       const nSerial = normalizeIdentifier(asset.serialNumber);
+       const host = asset.hostname.toLowerCase().trim();
+       
+       let inIntune = false;
+       let intuneComplianceState = undefined;
+       let intuneLastCheckInDays = undefined;
+       let intuneMatchMethod: 'Serial' | 'Hostname' | undefined = undefined;
+       let rawIntuneData = undefined;
 
-  // 5. Reconcile
-  const mappedAssets = assets.map(asset => {
-    // Check Intune (Detailed)
-    let inIntune = false;
-    // Check by Hostname
-    let intuneDetails = intuneData.get(asset.hostname.toLowerCase());
-    // Check by Serial
-    if (!intuneDetails) {
-        intuneDetails = intuneData.get(asset.serialNumber.toLowerCase());
-    }
-    // Check by Asset Tag (Important fix for KSNNK9C4Y924F scenario)
-    if (!intuneDetails && asset.assetTag) {
-        intuneDetails = intuneData.get(asset.assetTag.toLowerCase());
-    }
+       let inJamf = false;
+       let jamfMatchMethod: 'Serial' | 'Hostname' | undefined = undefined;
+       let rawJamfData = undefined;
 
-    if (intuneDetails) {
-        inIntune = true;
-    }
+       let inDefender = false;
+       let defenderMatchMethod: 'Hostname' | 'Serial' | undefined = undefined;
+       let rawDefenderData = undefined;
 
-    // Check Jamf
-    const inJamf = jamfFile
-      ? (jamfDevices.has(asset.hostname.toLowerCase()) || 
-         jamfDevices.has(asset.serialNumber.toLowerCase()) ||
-         (asset.assetTag && jamfDevices.has(asset.assetTag.toLowerCase()))) // Added Asset Tag Check
-      : false;
+       // Intune Matching
+       const intuneDetails = intuneMap.get(nSerial) || intuneMap.get(host);
+       if (intuneDetails) {
+            inIntune = true;
+            intuneMatchMethod = intuneMap.get(nSerial) ? 'Serial' : 'Hostname';
+            intuneComplianceState = intuneDetails.complianceState;
+            intuneLastCheckInDays = calculateDaysDiff(intuneDetails.lastContact);
+            rawIntuneData = intuneDetails.raw;
+       }
 
-    // Check Defender
-    let inDefender = defenderFile
-      ? (defenderDevices.has(asset.hostname.toLowerCase()) || 
-         defenderDevices.has(asset.serialNumber.toLowerCase()) ||
-         (asset.assetTag && defenderDevices.has(asset.assetTag.toLowerCase()))) // Added Asset Tag Check
-      : false;
+       // Jamf Matching
+       rawJamfData = jamfMap.get(nSerial) || jamfMap.get(host);
+       if (rawJamfData) {
+           inJamf = true;
+           jamfMatchMethod = jamfMap.get(nSerial) ? 'Serial' : 'Hostname';
+       }
 
-    // Defender Logic Extension (Intune correlation)
-    if (!inDefender && defenderFile && intuneFile) {
-        const intuneHost = intuneSerialToHostMap.get(asset.serialNumber.toLowerCase());
-        if (intuneHost) {
-             if (defenderDevices.has(intuneHost)) {
-                 inDefender = true;
-             }
-        }
-    }
+       // Defender Matching
+       rawDefenderData = defenderMap.get(host);
+       if (rawDefenderData) {
+           inDefender = true;
+           defenderMatchMethod = 'Hostname';
+       } else {
+           const iHost = intuneSerialToHost.get(nSerial);
+           if (iHost && defenderMap.has(iHost)) {
+               inDefender = true;
+               defenderMatchMethod = 'Serial';
+               rawDefenderData = defenderMap.get(iHost);
+           }
+       }
 
-    // Defender Logic Extension (Mobile User Name)
-    if (!inDefender && defenderFile && (asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad) && asset.fullName) {
-        const normalizedUser = formatNameForDefender(asset.fullName);
-        if (defenderDevices.has(normalizedUser)) {
-            inDefender = true;
-        } else {
-            for (const defenderItem of defenderDevices) {
-                if (defenderItem.includes(normalizedUser)) {
-                    inDefender = true;
-                    break;
-                }
-            }
-        }
-    }
+       return { 
+           ...asset, 
+           compliance: { 
+               inIntune, 
+               intuneComplianceState,
+               intuneLastCheckInDays,
+               intuneMatchMethod,
+               inJamf,
+               jamfMatchMethod,
+               inDefender,
+               defenderMatchMethod,
+               rawIntuneData,
+               rawJamfData,
+               rawDefenderData
+           } 
+       };
+   });
 
-    return {
-      ...asset,
-      compliance: {
-        inIntune,
-        intuneComplianceState: intuneDetails?.complianceState,
-        intuneLastCheckInDays: intuneDetails?.lastContact ? calculateDaysDiff(intuneDetails.lastContact) : undefined,
-        inJamf,
-        inDefender,
-        lastSync: new Date().toISOString()
-      }
-    };
-  });
+   // 6. Orphans (Envanter Dışı Cihazlar)
+   const orphans: Asset[] = [];
+   const processedOrphanKeys = new Set<string>();
 
-  return {
-    assets: mappedAssets,
-    cloudCounts: {
-      intune: intuneCount,
-      jamf: jamfCount,
-      defender: defenderCount
-    }
-  };
+   // Intune Orphans
+   intuneData.forEach((row, i) => {
+       const host = getValue(row, ['device name', 'hostname', 'devicename']);
+       const rawSerial = getValue(row, ['serial', 'imei', 'serial number', 'serialnumber']);
+       const model = getValue(row, ['model']).toLowerCase();
+       const probableType = (model.includes('iphone') || model.includes('ipad')) ? DeviceType.iPhone : DeviceType.Other;
+       const serial = cleanAppleMobileSerial(rawSerial, probableType);
+       const nSerial = normalizeIdentifier(serial);
+       const key = `intune-${nSerial || host?.toLowerCase().trim()}`;
+       if (!key || processedOrphanKeys.has(key)) return;
+       const isMatched = (nSerial && matchedSerials.has(nSerial)) || (host && matchedHostnames.has(host.toLowerCase().trim()));
+       if (!isMatched) {
+           processedOrphanKeys.add(key);
+           orphans.push({
+                id: `orphan-intune-${i}`,
+                assetTag: 'ENVANTER DIŞI',
+                statusDescription: 'Envanter Dışı (Intune)',
+                brand: getValue(row, ['manufacturer']) || 'Bilinmiyor',
+                model: getValue(row, ['model']) || 'Bilinmiyor',
+                hostname: host || 'Unknown',
+                serialNumber: serial || 'Unknown',
+                type: DeviceType.Other,
+                purchaseDate: new Date().toISOString(),
+                assignedUser: getValue(row, ['user', 'primary user']) || 'Cloud User',
+                isStock: false, isDepartment: false, isOrphan: true, orphanSource: 'Intune',
+                compliance: { inIntune: true, inJamf: false, inDefender: false, rawIntuneData: row }
+           });
+       }
+   });
+
+   // Jamf Orphans
+   jamfData.forEach((row, i) => {
+       const host = getValue(row, ['computer name', 'hostname', 'display name', 'computername']);
+       const serial = getValue(row, ['serial', 'serial number', 'serialnumber']);
+       const nSerial = normalizeIdentifier(serial);
+       const key = `jamf-${nSerial || host?.toLowerCase().trim()}`;
+       if (!key || processedOrphanKeys.has(key)) return;
+       const isMatched = (nSerial && matchedSerials.has(nSerial)) || (host && matchedHostnames.has(host.toLowerCase().trim()));
+       if (!isMatched) {
+           processedOrphanKeys.add(key);
+           orphans.push({
+                id: `orphan-jamf-${i}`,
+                assetTag: 'ENVANTER DIŞI',
+                statusDescription: 'Envanter Dışı (Jamf)',
+                brand: 'Apple',
+                model: getValue(row, ['model']) || 'MacBook',
+                hostname: host || 'Unknown',
+                serialNumber: serial || 'Unknown',
+                type: DeviceType.MacBook,
+                purchaseDate: new Date().toISOString(),
+                assignedUser: getValue(row, ['user', 'full name']) || 'Jamf User',
+                isStock: false, isDepartment: false, isOrphan: true, orphanSource: 'Jamf',
+                compliance: { inIntune: false, inJamf: true, inDefender: false, rawJamfData: row }
+           });
+       }
+   });
+
+   // Defender Orphans
+   defenderData.forEach((row, i) => {
+       const host = getValue(row, ['device name', 'hostname', 'devicename']);
+       const key = `defender-${host?.toLowerCase().trim()}`;
+       if (!key || processedOrphanKeys.has(key)) return;
+       const isMatched = host && matchedHostnames.has(host.toLowerCase().trim());
+       if (!isMatched) {
+           processedOrphanKeys.add(key);
+           orphans.push({
+                id: `orphan-defender-${i}`,
+                assetTag: 'ENVANTER DIŞI',
+                statusDescription: 'Envanter Dışı (Defender)',
+                brand: 'Unknown',
+                model: 'Unknown',
+                hostname: host || 'Unknown',
+                serialNumber: 'Unknown',
+                type: DeviceType.Other,
+                purchaseDate: new Date().toISOString(),
+                assignedUser: 'Defender User',
+                isStock: false, isDepartment: false, isOrphan: true, orphanSource: 'Defender',
+                compliance: { inIntune: false, inJamf: false, inDefender: true, rawDefenderData: row }
+           });
+       }
+   });
+
+   return {
+       assets: mappedAssets,
+       orphans,
+       cloudCounts: { 
+           intune: intuneData.length, 
+           jamf: jamfData.length, 
+           defender: defenderData.length 
+       }
+   };
 };

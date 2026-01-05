@@ -1,47 +1,53 @@
 
 import React from 'react';
-import { ShieldCheck, ShieldAlert, CloudOff, Cloud, Layers, Shield, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, CloudOff, Cloud, Layers, Shield, AlertTriangle, CheckCircle2, XCircle, Info, MinusCircle } from 'lucide-react';
 
 interface StatusBadgeProps {
   present: boolean;
   label: string;
   type: 'intune' | 'jamf' | 'defender';
-  // Optional extra details
   complianceState?: string;
   lastCheckInDays?: number;
+  matchMethod?: string;
 }
 
-export const StatusBadge: React.FC<StatusBadgeProps> = ({ present, label, type, complianceState, lastCheckInDays }) => {
+export const StatusBadge: React.FC<StatusBadgeProps> = ({ present, label, type, complianceState, lastCheckInDays, matchMethod }) => {
   
   if (present) {
-    // INTUNE SPECIAL LOGIC:
-    // If present but marked "NonCompliant" or "NotCompliant" in source, or stale (>30 days), warn.
-    const isIntuneWarning = type === 'intune' && (
+    let tooltip = `Durum: Aktif (${label})`;
+    if (matchMethod) tooltip += `\nEşleşme Kriteri: ${matchMethod}`;
+    if (lastCheckInDays) tooltip += `\nSon Görülme: ${lastCheckInDays} gün önce`;
+    if (complianceState) tooltip += `\nCloud Durumu: ${complianceState}`;
+
+    const isWarning = type === 'intune' && (
        (complianceState && complianceState.toLowerCase().includes('non')) ||
        (lastCheckInDays && lastCheckInDays > 30)
     );
 
-    if (isIntuneWarning) {
+    // WARNING STATE (Present but issue)
+    if (isWarning) {
         return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200 shadow-sm" title={`Status: ${complianceState || 'Unknown'}, Last Sync: ${lastCheckInDays || '?'} days ago`}>
-            <AlertTriangle className="w-3 h-3 mr-1.5" />
-            {complianceState?.includes('Non') ? 'Non-Compliant' : 'Stale'}
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-sm shadow-amber-500/5 cursor-help transition-all hover:scale-105" title={tooltip}>
+            <AlertTriangle className="w-3.5 h-3.5 stroke-[2.5]" />
+            {complianceState?.includes('Non') ? 'UYUMSUZ' : 'ESKİ VERİ'}
           </span>
         );
     }
 
+    // ACTIVE STATE (All good)
     return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm" title={lastCheckInDays ? `Last Sync: ${lastCheckInDays} days ago` : 'Active'}>
-        {type === 'intune' ? <Cloud className="w-3 h-3 mr-1.5" /> : type === 'jamf' ? <Layers className="w-3 h-3 mr-1.5" /> : <ShieldCheck className="w-3 h-3 mr-1.5" />}
-        Active
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5 cursor-help transition-all hover:scale-105" title={tooltip}>
+        <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />
+        AKTİF
       </span>
     );
   }
 
+  // MISSING STATE (Missing agent)
   return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-700 border border-rose-200 shadow-sm">
-      {type === 'intune' ? <CloudOff className="w-3 h-3 mr-1.5" /> : type === 'jamf' ? <ShieldAlert className="w-3 h-3 mr-1.5" /> : <Shield className="w-3 h-3 mr-1.5" />}
-      Missing
+    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shadow-sm shadow-rose-500/5 transition-all hover:scale-105" title={`${label} kaydı bulunamadı.`}>
+      <XCircle className="w-3.5 h-3.5 stroke-[2.5]" />
+      EKSİK
     </span>
   );
 };

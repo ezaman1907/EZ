@@ -1,8 +1,13 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Asset, DeviceType, DashboardFilterType } from '../types';
 import { StatusBadge } from './StatusBadge';
-import { Search, Filter, Monitor, Laptop, Smartphone, Cpu, Tag, AlertCircle, PcCase, Tablet, XCircle, Check, User, Package, AlertOctagon, Download } from 'lucide-react';
+import { 
+  Search, Filter, Monitor, Laptop, Smartphone, Cpu, Tag, AlertCircle, PcCase, 
+  Tablet, XCircle, Check, User, Package, AlertOctagon, Download, Building2, 
+  Unlink, FileKey, CheckCircle2, Minus, Info, X, ExternalLink, Shield, Database, Globe,
+  ShieldCheck, Fingerprint, Layers, Activity, Home, RotateCcw
+} from 'lucide-react';
 
 interface InventoryTableProps {
   data: Asset[];
@@ -10,6 +15,7 @@ interface InventoryTableProps {
   onClearDashboardFilter: () => void;
   deviceFilter: string;
   onDeviceFilterChange: (type: string) => void;
+  onHome: () => void; // New: Go back to dashboard
 }
 
 interface ColumnFilters {
@@ -24,13 +30,14 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   dashboardFilter, 
   onClearDashboardFilter,
   deviceFilter,
-  onDeviceFilterChange
+  onDeviceFilterChange,
+  onHome
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>({});
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   
-  // Close dropdowns when clicking outside
   const dropdownRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -42,605 +49,471 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Reset internal filters if dashboard filter changes (optional, but good UX)
-  useEffect(() => {
-    if (dashboardFilter !== 'ALL') {
-       // Keep column filters or reset? Let's keep them for power users.
-    }
-  }, [dashboardFilter]);
-
   const getDeviceIcon = (type: DeviceType) => {
     switch (type) {
-      case DeviceType.Desktop: 
-        return <PcCase className="w-5 h-5 text-slate-600" />;
-      case DeviceType.Notebook: 
-        return <Laptop className="w-5 h-5 text-blue-600" />;
-      case DeviceType.MacBook: 
-        return <Laptop className="w-5 h-5 text-slate-900" />;
-      case DeviceType.iPhone: 
-        return <Smartphone className="w-5 h-5 text-sky-600" />;
-      case DeviceType.iPad: 
-        return <Tablet className="w-5 h-5 text-indigo-600" />;
-      case DeviceType.Monitor: 
-        return <Monitor className="w-5 h-5 text-slate-500" />;
-      default: 
-        return <Cpu className="w-5 h-5 text-slate-400" />;
+      case DeviceType.Desktop: return <PcCase className="w-5 h-5" />;
+      case DeviceType.Notebook: return <Laptop className="w-5 h-5" />;
+      case DeviceType.MacBook: return <Laptop className="w-5 h-5" />;
+      case DeviceType.iPhone: return <Smartphone className="w-5 h-5" />;
+      case DeviceType.iPad: return <Tablet className="w-5 h-5" />;
+      case DeviceType.Monitor: return <Monitor className="w-5 h-5" />;
+      default: return <Cpu className="w-5 h-5" />;
     }
   };
 
-  // --- Filtering Logic ---
-  const filteredData = data.filter(asset => {
-    const term = searchTerm.toLowerCase();
-    const isMac = asset.type === DeviceType.MacBook;
-    const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
-    const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
-    
-    // 1. Dashboard Filter Logic
-    if (dashboardFilter === 'COMPLIANT') {
-      if (asset.isStock) return false; // Exclude stock from Compliant view
-      if (isMac) {
-        if (!asset.compliance?.inJamf || !asset.compliance?.inDefender) return false;
-      } else if (isComputer || isMobile) {
-        if (!asset.compliance?.inIntune || !asset.compliance?.inDefender) return false;
-      }
-    } else if (dashboardFilter === 'MISSING_INTUNE') {
-      if (asset.isStock) return false; // Exclude stock from Missing views
-      if (isMac) return false;
-      if (asset.compliance?.inIntune) return false;
-    } else if (dashboardFilter === 'MISSING_JAMF') {
-      if (asset.isStock) return false; // Exclude stock
-      if (asset.type !== DeviceType.MacBook) return false; 
-      if (asset.compliance?.inJamf) return false;
-    } else if (dashboardFilter === 'MISSING_DEFENDER') {
-      if (asset.isStock) return false; // Exclude stock
-      const allowedTypes = [DeviceType.MacBook, DeviceType.Desktop, DeviceType.Notebook, DeviceType.iPhone, DeviceType.iPad];
-      if (!allowedTypes.includes(asset.type)) return false;
-      if (asset.compliance?.inDefender) return false;
-    } else if (dashboardFilter === 'STOCK') {
-      if (!asset.isStock) return false;
-    }
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    onClearDashboardFilter();
+    onDeviceFilterChange('All');
+  };
 
-    // 2. Device Category Filter (Pre-existing)
-    if (deviceFilter !== 'All') {
-        if (deviceFilter === 'STOCK') {
-            if (!asset.isStock) return false;
-        } else if (deviceFilter === 'Windows') {
-             // Show both Desktop and Notebook for Windows filter
-             if (asset.type !== DeviceType.Desktop && asset.type !== DeviceType.Notebook) return false;
-        } else if (deviceFilter === DeviceType.iPhone) {
-             if (asset.type !== DeviceType.iPhone && asset.type !== DeviceType.iPad) return false;
-        } else {
-             if (asset.type !== deviceFilter) return false;
+  const filteredData = useMemo(() => {
+    return data.filter(asset => {
+        if (asset.isOrphan) {
+            if (searchTerm) {
+                const term = searchTerm.toLowerCase();
+                return (
+                   asset.hostname.toLowerCase().includes(term) ||
+                   asset.serialNumber.toLowerCase().includes(term) ||
+                   (asset.assignedUser && asset.assignedUser.toLowerCase().includes(term)) ||
+                   asset.assetTag.toLowerCase().includes(term)
+                );
+            }
+            return true;
         }
-    }
 
-    // 3. Column Specific Filters (NEW)
-    if (columnFilters.status && asset.statusDescription !== columnFilters.status) return false;
-    if (columnFilters.brand && asset.brand !== columnFilters.brand) return false;
-    if (columnFilters.model && asset.model !== columnFilters.model) return false;
+        const term = searchTerm.toLowerCase();
+        const isMac = asset.type === DeviceType.MacBook;
+        const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
+        const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
+        
+        if (dashboardFilter === 'COMPLIANT') {
+          if (asset.isExempt) return true;
+          if (asset.isStock) return false;
+          if (isMac) {
+            if (!asset.compliance?.inJamf || !asset.compliance?.inDefender) return false;
+          } else if (isComputer) {
+            if (!asset.compliance?.inIntune || !asset.compliance?.inDefender) return false;
+          } else if (isMobile) {
+            if (!asset.compliance?.inIntune) return false;
+          }
+        } else if (dashboardFilter === 'MISSING_INTUNE') {
+          if (asset.isExempt || asset.isStock || isMac) return false;
+          if (asset.compliance?.inIntune) return false;
+        } else if (dashboardFilter === 'MISSING_JAMF') {
+          if (asset.isExempt || asset.isStock || asset.type !== DeviceType.MacBook) return false; 
+          if (asset.compliance?.inJamf) return false;
+        } else if (dashboardFilter === 'MISSING_DEFENDER') {
+          if (asset.isExempt || asset.isStock) return false;
+          const allowedTypes = [DeviceType.MacBook, DeviceType.Desktop, DeviceType.Notebook];
+          if (!allowedTypes.includes(asset.type)) return false;
+          if (asset.compliance?.inDefender) return false;
+        } else if (dashboardFilter === 'STOCK') {
+          if (!asset.isStock || asset.isDepartment) return false; 
+        }
+
+        if (deviceFilter !== 'All') {
+            if (deviceFilter === 'STOCK') {
+                if (!asset.isStock) return false;
+            } else if (deviceFilter === 'DEPARTMENT') {
+                if (!asset.isDepartment) return false;
+            } else if (deviceFilter === 'ALL_MISSING') {
+                if (asset.isExempt || asset.isStock) return false;
+                if (isMac) {
+                    if (!asset.compliance?.inJamf || !asset.compliance?.inDefender) return true;
+                } else if (isComputer) {
+                    if (!asset.compliance?.inIntune || !asset.compliance?.inDefender) return true;
+                } else if (isMobile) {
+                    if (!asset.compliance?.inIntune) return true;
+                }
+                return false;
+            } else if (deviceFilter === 'Windows') {
+                 if (asset.type !== DeviceType.Desktop && asset.type !== DeviceType.Notebook) return false;
+            } else if (deviceFilter === 'iPhone_iPad' || deviceFilter === DeviceType.iPhone) {
+                 if (asset.type !== DeviceType.iPhone && asset.type !== DeviceType.iPad) return false;
+            } else {
+                 if (asset.type !== deviceFilter) return false;
+            }
+        }
+
+        if (columnFilters.status && asset.statusDescription !== columnFilters.status) return false;
+        if (columnFilters.brand && asset.brand !== columnFilters.brand) return false;
+        if (columnFilters.model && asset.model !== columnFilters.model) return false;
+        if (columnFilters.assignedUser) {
+          const displayUser = asset.fullName || asset.userName || asset.assignedUser || 'Unassigned';
+          if (displayUser !== columnFilters.assignedUser) return false;
+        }
+
+        if (term) {
+          return (
+            asset.hostname.toLowerCase().includes(term) ||
+            asset.assetTag.toLowerCase().includes(term) ||
+            asset.serialNumber.toLowerCase().includes(term) ||
+            (asset.fullName && asset.fullName.toLowerCase().includes(term)) ||
+            (asset.userName && asset.userName.toLowerCase().includes(term)) ||
+            asset.assignedUser.toLowerCase().includes(term) ||
+            (asset.brand && asset.brand.toLowerCase().includes(term))
+          );
+        }
+
+        return true;
+      });
+  }, [data, searchTerm, columnFilters, dashboardFilter, deviceFilter]);
+
+  // Specific Breakdown for ALL_MISSING Filter
+  const missingSummary = useMemo(() => {
+    if (deviceFilter !== 'ALL_MISSING') return null;
     
-    // User Filter Logic: Match against the primary displayed name
-    if (columnFilters.assignedUser) {
-      const displayUser = asset.fullName || asset.userName || asset.assignedUser || 'Unassigned';
-      if (displayUser !== columnFilters.assignedUser) return false;
-    }
+    let intuneCount = 0;
+    let jamfCount = 0;
+    let defenderCount = 0;
 
-    // 4. Text Search (Pre-existing)
-    if (term) {
-      const matchesSearch = 
-        asset.hostname.toLowerCase().includes(term) ||
-        asset.assetTag.toLowerCase().includes(term) ||
-        asset.serialNumber.toLowerCase().includes(term) ||
-        (asset.fullName && asset.fullName.toLowerCase().includes(term)) ||
-        (asset.userName && asset.userName.toLowerCase().includes(term)) ||
-        asset.assignedUser.toLowerCase().includes(term) ||
-        (asset.brand && asset.brand.toLowerCase().includes(term));
-      
-      if (!matchesSearch) return false;
-    }
+    filteredData.forEach(asset => {
+        const isMac = asset.type === DeviceType.MacBook;
+        const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
+        const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
 
-    return true;
-  });
+        if (!isMac && (isComputer || isMobile) && !asset.compliance?.inIntune) intuneCount++;
+        if (isMac && !asset.compliance?.inJamf) jamfCount++;
+        if (isComputer && !asset.compliance?.inDefender) defenderCount++;
+    });
 
-  // --- Export CSV Logic ---
+    return { intuneCount, jamfCount, defenderCount };
+  }, [filteredData, deviceFilter]);
+
   const handleExportFilteredData = () => {
     if (filteredData.length === 0) return;
-
-    // Define Headers
-    const headers = [
-      'Referans No', 
-      'Seri No', 
-      'Hostname', 
-      'Marka', 
-      'Model', 
-      'Cihaz Tipi', 
-      'Kullanıcı', 
-      'Durum', 
-      'Stok Mu?', 
-      'Intune (Windows/Mobil)', 
-      'Jamf (macOS)', 
-      'Defender (Koruma)'
-    ];
-
-    // Helper to escape CSV fields
-    const escapeCsv = (field: any) => {
-      const str = String(field || '');
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
-    // Map Data
-    const rows = filteredData.map(asset => {
-      return [
-        asset.assetTag,
-        asset.serialNumber,
-        asset.hostname,
-        asset.brand || '',
-        asset.model || '',
-        asset.type,
-        asset.assignedUser || '',
-        asset.statusDescription || '',
-        asset.isStock ? 'EVET' : 'HAYIR',
-        asset.compliance?.inIntune ? 'VAR' : 'YOK',
-        asset.compliance?.inJamf ? 'VAR' : 'YOK',
-        asset.compliance?.inDefender ? 'VAR' : 'YOK'
-      ];
-    });
-
-    // Combine Headers and Rows
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(escapeCsv).join(','))
-    ].join('\n');
-
-    // Create Blob with BOM for Excel compatibility
+    const headers = ['Referans No', 'Seri No', 'Hostname', 'Marka', 'Model', 'Kullanıcı', 'Durum', 'Intune', 'Jamf', 'Defender'];
+    const rows = filteredData.map(asset => [
+      asset.assetTag, asset.serialNumber, asset.hostname, asset.brand, asset.model, asset.assignedUser, asset.statusDescription,
+      asset.compliance?.inIntune ? 'OK' : 'MISSING', asset.compliance?.inJamf ? 'OK' : 'MISSING', asset.compliance?.inDefender ? 'OK' : 'MISSING'
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
-    // Generate Filename based on filters
-    let filename = 'AssetGuard_Listesi.csv';
-    if (dashboardFilter !== 'ALL') {
-        filename = `AssetGuard_${dashboardFilter}.csv`;
-    } else if (deviceFilter !== 'All') {
-        filename = `AssetGuard_${deviceFilter.replace(/\s/g, '')}.csv`;
-    }
-
-    // Trigger Download
     const link = document.createElement('a');
-    if (link.download !== undefined) {
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', filename);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    link.href = URL.createObjectURL(blob);
+    link.download = 'AssetGuard_Inventory.csv';
+    link.click();
+  };
+
+  const renderCellStatus = (present: boolean, label: string, type: 'intune' | 'jamf' | 'defender', asset: Asset) => {
+    if (present) {
+      return (
+        <StatusBadge 
+          present={true} 
+          label={label} 
+          type={type} 
+          complianceState={asset.compliance?.[`${type}ComplianceState` as keyof typeof asset.compliance] as string}
+          lastCheckInDays={asset.compliance?.[`${type}LastCheckInDays` as keyof typeof asset.compliance] as number}
+          matchMethod={asset.compliance?.[`${type}MatchMethod` as keyof typeof asset.compliance] as string}
+        />
+      );
     }
-  };
-
-  // --- Helpers for Dropdowns ---
-  const getUniqueValues = (key: keyof Asset) => {
-    const values = new Set<string>();
-    data.forEach(item => {
-       // Apply Device Filter basic logic
-       let typeMatch = true;
-       if (deviceFilter !== 'All') {
-          if (deviceFilter === 'STOCK') typeMatch = item.isStock;
-          else if (deviceFilter === 'Windows') {
-             typeMatch = (item.type === DeviceType.Desktop || item.type === DeviceType.Notebook);
-          }
-          else if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
-          else typeMatch = item.type === deviceFilter;
-       }
-       
-       if (typeMatch && item[key]) {
-         values.add(String(item[key]));
-       }
-    });
-    return Array.from(values).sort();
-  };
-
-  // Special helper for Users because the data is spread across 3 fields
-  const getUniqueUsers = () => {
-    const values = new Set<string>();
-    data.forEach(item => {
-       let typeMatch = true;
-       if (deviceFilter !== 'All') {
-          if (deviceFilter === 'STOCK') typeMatch = item.isStock;
-          else if (deviceFilter === 'Windows') {
-             typeMatch = (item.type === DeviceType.Desktop || item.type === DeviceType.Notebook);
-          }
-          else if (deviceFilter === DeviceType.iPhone) typeMatch = (item.type === DeviceType.iPhone || item.type === DeviceType.iPad);
-          else typeMatch = item.type === deviceFilter;
-       }
-       
-       if (typeMatch) {
-          // Priority order must match the table cell rendering
-          const displayUser = item.fullName || item.userName || item.assignedUser;
-          if (displayUser) values.add(displayUser);
-       }
-    });
-    return Array.from(values).sort();
-  };
-
-  const toggleDropdown = (name: string) => {
-    if (activeDropdown === name) {
-      setActiveDropdown(null);
-    } else {
-      setActiveDropdown(name);
+    if (asset.isStock) {
+      return (
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-sm transition-all hover:scale-105" title={`${label} stokta ancak bulut kaydı bulunamadı.`}>
+          <Package className="w-3.5 h-3.5 text-amber-500" />
+          <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-tight">STOKTA</span>
+          <XCircle className="w-3 h-3 text-rose-500 stroke-[3]" />
+        </div>
+      );
     }
-  };
-
-  const applyColumnFilter = (key: keyof ColumnFilters, value: string | undefined) => {
-    setColumnFilters(prev => ({ ...prev, [key]: value }));
-    setActiveDropdown(null);
-  };
-
-  const getFilterLabel = () => {
-    switch (dashboardFilter) {
-      case 'COMPLIANT': return 'Showing: Fully Compliant Devices';
-      case 'MISSING_INTUNE': return 'Showing: Devices Missing from Intune';
-      case 'MISSING_JAMF': return 'Showing: MacBooks Missing from Jamf';
-      case 'MISSING_DEFENDER': return 'Showing: Devices Missing from Defender';
-      case 'STOCK': return 'Showing: Stock Inventory';
-      default: return null;
+    if (asset.isExempt) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shadow-sm transition-all hover:scale-105">
+          <ShieldCheck className="w-3 h-3 stroke-[3]" />
+          MUAF
+        </span>
+      );
     }
+    return <StatusBadge present={false} label={label} type={type} />;
+  };
+
+  const RawDataView = ({ title, data, icon: Icon, color, matchMethod }: { title: string, data: any, icon: any, color: string, matchMethod?: string }) => {
+    if (!data) return null;
+    return (
+      <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden">
+        <div className={`px-5 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-700/50 ${color}`}>
+          <div className="flex items-center gap-2">
+            <Icon className="w-4 h-4" />
+            <h4 className="text-sm font-bold tracking-tight uppercase">{title} Kayıt Detayı</h4>
+          </div>
+          {matchMethod && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-white/50 dark:bg-slate-800/50 border border-current/20">
+              <Fingerprint className="w-3 h-3" />
+              <span className="text-[10px] font-black uppercase tracking-wider">Eşleşme: {matchMethod}</span>
+            </div>
+          )}
+        </div>
+        <div className="p-5 max-h-[300px] overflow-y-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-8">
+            {Object.entries(data).map(([key, value]) => (
+              <div key={key} className="flex flex-col border-b border-slate-200/40 dark:border-slate-800/40 pb-1.5 last:border-0">
+                <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-0.5">{key}</span>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 break-all">{String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden pb-12">
-      {/* Active Dashboard Filter Banner */}
-      {dashboardFilter !== 'ALL' && (
-        <div className="bg-blue-50/50 px-5 py-3 border-b border-blue-100 flex items-center justify-between">
-          <div className="text-sm font-medium text-blue-800 flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            {getFilterLabel()}
+    <div className="bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden pb-4 transition-all">
+      {/* Asset Details Modal */}
+      {selectedAsset && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-white dark:bg-slate-800 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-700">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/20">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-600/30">
+                  {getDeviceIcon(selectedAsset.type)}
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">{selectedAsset.assetTag}</h3>
+                  <p className="text-xs text-slate-500 font-bold flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5" /> {selectedAsset.hostname} • {selectedAsset.serialNumber}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedAsset(null)} className="p-2.5 rounded-2xl bg-white dark:bg-slate-700 text-slate-400 hover:text-rose-500 border border-slate-100 dark:border-slate-600 transition-all shadow-sm">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-700">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Durum</span>
+                  <span className="text-sm font-black text-slate-800 dark:text-slate-200">{selectedAsset.statusDescription}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-700">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Marka / Model</span>
+                  <span className="text-sm font-black text-slate-800 dark:text-slate-200">{selectedAsset.brand} {selectedAsset.model}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-700">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Kullanıcı</span>
+                  <span className="text-sm font-black text-slate-800 dark:text-slate-200">{selectedAsset.fullName || selectedAsset.userName}</span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/30 border border-slate-100 dark:border-slate-700">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Kategori</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-slate-800 dark:text-slate-200">{selectedAsset.type}</span>
+                    {selectedAsset.isExempt && <span className="bg-teal-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Muaf</span>}
+                    {selectedAsset.isStock && <span className="bg-indigo-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">Stok</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <RawDataView title="Intune" data={selectedAsset.compliance?.rawIntuneData} icon={Laptop} color="bg-blue-500/10 text-blue-600 dark:text-blue-400" matchMethod={selectedAsset.compliance?.intuneMatchMethod} />
+                <RawDataView title="Jamf" data={selectedAsset.compliance?.rawJamfData} icon={Layers} color="bg-slate-600/10 text-slate-700 dark:text-slate-300" matchMethod={selectedAsset.compliance?.jamfMatchMethod} />
+                <RawDataView title="Defender" data={selectedAsset.compliance?.rawDefenderData} icon={Shield} color="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" matchMethod={selectedAsset.compliance?.defenderMatchMethod} />
+                {!selectedAsset.compliance?.rawIntuneData && !selectedAsset.compliance?.rawJamfData && !selectedAsset.compliance?.rawDefenderData && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center bg-rose-50/50 dark:bg-rose-950/20 rounded-3xl border border-dashed border-rose-200 dark:border-rose-900/50">
+                    <XCircle className="w-12 h-12 text-rose-300 mb-3" />
+                    <h4 className="text-lg font-bold text-rose-900 dark:text-rose-200">Cloud Kaydı Bulunamadı</h4>
+                    <p className="text-sm text-rose-600 dark:text-rose-400 max-w-xs mt-1">Bu cihaz için eşleşen bir bulut kaydı bulunamadı.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <button 
-            onClick={onClearDashboardFilter}
-            className="text-xs bg-white text-blue-600 hover:bg-blue-50 px-3 py-1 rounded-full border border-blue-200 flex items-center gap-1 transition-colors"
-          >
-            <XCircle className="w-3 h-3" />
-            Clear Filter
-          </button>
         </div>
       )}
 
-      {/* Controls */}
-      <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/30">
-        <div className="flex items-center gap-4">
-            <h3 className="text-lg font-bold text-slate-800">Inventory Database</h3>
-            <button 
-                onClick={handleExportFilteredData}
-                className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 shadow-sm transition-all"
-                title="Görüntülenen listeyi Excel (CSV) olarak indir"
-            >
-                <Download className="w-3.5 h-3.5" />
-                Listeyi İndir (.csv)
-            </button>
-        </div>
-        
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 text-slate-400" />
-            </div>
-            <input
-              type="text"
-              placeholder="Search referans, serial, user..."
-              className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-64 bg-white text-slate-800 placeholder-slate-400"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
+      {/* Table Header Section - Re-designed with Home & Reset */}
+      <div className="p-6 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+          <div className="flex items-center gap-4">
+              <button 
+                onClick={onHome}
+                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-black shadow-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition-all active:scale-95"
+              >
+                <Home className="w-4 h-4 text-blue-600" />
+                Ana Sayfa
+              </button>
+              
+              <div className="w-px h-8 bg-slate-200 dark:bg-slate-700 hidden sm:block"></div>
 
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Filter className="h-4 w-4 text-slate-400" />
+              <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-600/20">
+                    <DatabaseIcon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight uppercase tracking-tight">Varlık Yönetimi</h3>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{filteredData.length} Kayıt</p>
+                  </div>
+              </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Search Bar */}
+            <div className="relative group flex-1 min-w-[240px]">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+              <input 
+                type="text" 
+                placeholder="Hostname, Seri No, İsim Ara..." 
+                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm font-medium" 
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+              />
             </div>
-            <select
-              className="pl-10 pr-8 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none bg-white text-slate-800 font-medium"
-              value={deviceFilter}
-              onChange={(e) => onDeviceFilterChange(e.target.value)}
-            >
-              <option value="All">All Devices</option>
-              <option value="Windows">Windows (All)</option>
-              <option value="STOCK">Stock Inventory</option>
-              <option value={DeviceType.Desktop}>Desktop</option>
-              <option value={DeviceType.Notebook}>Notebook</option>
-              <option value={DeviceType.MacBook}>MacBook</option>
-              <option value={DeviceType.iPhone}>iPhone / iPad</option>
-            </select>
+
+            {/* Device Category Filter */}
+            <div className="relative min-w-[180px]">
+              <select 
+                className="w-full pl-10 pr-10 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none appearance-none cursor-pointer shadow-sm" 
+                value={deviceFilter} 
+                onChange={(e) => onDeviceFilterChange(e.target.value)}
+              >
+                <option value="All">Filtre: Hepsi</option>
+                <option value="ALL_MISSING">🚨 Eksik Kayıtlar</option>
+                <option value="Windows">Windows Sistemler</option>
+                <option value="iPhone_iPad">iPhone & iPad</option>
+                <option value="STOCK">Stok Envanteri</option>
+                <option value="DEPARTMENT">Ortak Kullanım</option>
+                <option value={DeviceType.MacBook}>MacBook Pro/Air</option>
+              </select>
+              <Filter className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500 pointer-events-none" />
+              <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                 <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+              </div>
+            </div>
+
+            {/* Reset & Export Buttons */}
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={handleResetFilters}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-bold hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20 dark:hover:text-red-400 transition-all group"
+                title="Tüm Filtreleri Sıfırla"
+              >
+                <RotateCcw className="w-4 h-4 group-hover:rotate-[-45deg] transition-transform" />
+                Sıfırla
+              </button>
+
+              <button 
+                onClick={handleExportFilteredData} 
+                className="p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-md shadow-blue-600/20"
+                title="CSV Olarak İndir"
+              >
+                <Download className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Breakdown Summary Section (Conditional) */}
+        {missingSummary && (
+          <div className="mt-6 flex flex-wrap items-center gap-4 py-3 px-4 bg-red-50/50 dark:bg-red-950/20 rounded-2xl border border-red-100 dark:border-red-900/30 animate-fadeIn">
+            <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+               <Activity className="w-4 h-4" />
+               <span className="text-xs font-black uppercase tracking-wider">Kritik Eksiklik Özeti:</span>
+            </div>
+            <div className="flex gap-4">
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                  <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-tight">Intune: {missingSummary.intuneCount}</span>
+               </div>
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                  <span className="w-2 h-2 rounded-full bg-red-600"></span>
+                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-tight">Jamf: {missingSummary.jamfCount}</span>
+               </div>
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-tight">Defender: {missingSummary.defenderCount}</span>
+               </div>
+            </div>
+            <p className="text-[10px] text-slate-400 italic ml-auto hidden md:block">* Not: Bazı cihazlar birden fazla serviste eksik olabilir.</p>
+          </div>
+        )}
       </div>
 
-      {/* Table */}
-      <div className="overflow-visible" ref={dropdownRef}>
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              {/* Column: Device / Status */}
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-64 relative">
-                <div className="flex items-center justify-between cursor-pointer group" onClick={() => toggleDropdown('status')}>
-                  <span>Device<br/><span className="text-slate-400 font-normal lowercase">(referans / durum)</span></span>
-                  <div className={`p-1 rounded hover:bg-slate-200 transition-colors ${columnFilters.status ? 'bg-blue-100 text-blue-600' : 'text-slate-300 group-hover:text-slate-500'}`}>
-                     <Filter className="w-3 h-3" />
-                  </div>
-                </div>
-                {/* Status Dropdown */}
-                {activeDropdown === 'status' && (
-                  <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-xl border border-slate-200 z-50 max-h-64 overflow-y-auto">
-                    <div className="p-2">
-                      <div 
-                         className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${!columnFilters.status ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                         onClick={() => applyColumnFilter('status', undefined)}
-                      >
-                        All Statuses
-                        {!columnFilters.status && <Check className="w-3 h-3" />}
-                      </div>
-                      <div className="my-1 border-t border-slate-100"></div>
-                      {getUniqueValues('statusDescription').map(status => (
-                        <div 
-                          key={status}
-                          className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${columnFilters.status === status ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                          onClick={() => applyColumnFilter('status', status)}
-                        >
-                          {status}
-                          {columnFilters.status === status && <Check className="w-3 h-3" />}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </th>
-
-              {/* Column: Marka / Model */}
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider relative">
-                <div className="flex items-center justify-between cursor-pointer group" onClick={() => toggleDropdown('brandModel')}>
-                  <span>Marka / Model</span>
-                  <div className={`p-1 rounded hover:bg-slate-200 transition-colors ${(columnFilters.brand || columnFilters.model) ? 'bg-blue-100 text-blue-600' : 'text-slate-300 group-hover:text-slate-500'}`}>
-                     <Filter className="w-3 h-3" />
-                  </div>
-                </div>
-                 {/* Brand/Model Dropdown */}
-                 {activeDropdown === 'brandModel' && (
-                  <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-xl border border-slate-200 z-50 max-h-80 overflow-y-auto">
-                    <div className="p-2">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1">Marka (Brand)</div>
-                      <div 
-                         className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${!columnFilters.brand ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                         onClick={() => applyColumnFilter('brand', undefined)}
-                      >
-                        All Brands
-                        {!columnFilters.brand && <Check className="w-3 h-3" />}
-                      </div>
-                      {getUniqueValues('brand').map(brand => (
-                        <div 
-                          key={brand}
-                          className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${columnFilters.brand === brand ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                          onClick={() => applyColumnFilter('brand', brand)}
-                        >
-                          {brand}
-                          {columnFilters.brand === brand && <Check className="w-3 h-3" />}
-                        </div>
-                      ))}
-                      
-                      <div className="my-2 border-t border-slate-100"></div>
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1">Model</div>
-                      <div 
-                         className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${!columnFilters.model ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                         onClick={() => applyColumnFilter('model', undefined)}
-                      >
-                        All Models
-                        {!columnFilters.model && <Check className="w-3 h-3" />}
-                      </div>
-                      {getUniqueValues('model').map(model => (
-                        <div 
-                          key={model}
-                          className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${columnFilters.model === model ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                          onClick={() => applyColumnFilter('model', model)}
-                        >
-                          {model}
-                          {columnFilters.model === model && <Check className="w-3 h-3" />}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </th>
-
-              {/* Column: Details (User Filter) */}
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider relative">
-                <div className="flex items-center justify-between cursor-pointer group" onClick={() => toggleDropdown('user')}>
-                  <span>Details<br/><span className="text-slate-400 font-normal lowercase">(serial / user)</span></span>
-                  <div className={`p-1 rounded hover:bg-slate-200 transition-colors ${columnFilters.assignedUser ? 'bg-blue-100 text-blue-600' : 'text-slate-300 group-hover:text-slate-500'}`}>
-                     <Filter className="w-3 h-3" />
-                  </div>
-                </div>
-                {/* User Dropdown */}
-                {activeDropdown === 'user' && (
-                  <div className="absolute top-full left-0 mt-1 w-72 bg-white rounded-lg shadow-xl border border-slate-200 z-50 max-h-80 overflow-y-auto">
-                    <div className="p-2">
-                      <div className="px-2 pb-2 pt-1 border-b border-slate-100 mb-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Filter by Assigned User</span>
-                      </div>
-                      <div 
-                         className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${!columnFilters.assignedUser ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                         onClick={() => applyColumnFilter('assignedUser', undefined)}
-                      >
-                        All Users
-                        {!columnFilters.assignedUser && <Check className="w-3 h-3" />}
-                      </div>
-                      {getUniqueUsers().map(user => (
-                        <div 
-                          key={user}
-                          className={`px-3 py-2 text-xs rounded-md cursor-pointer flex items-center justify-between ${columnFilters.assignedUser === user ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'}`}
-                          onClick={() => applyColumnFilter('assignedUser', user)}
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                             <User className="w-3 h-3 text-slate-400" />
-                             <span className="truncate">{user}</span>
-                          </div>
-                          {columnFilters.assignedUser === user && <Check className="w-3 h-3 flex-shrink-0" />}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </th>
-
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Intune
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Jamf
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Defender
-              </th>
+      {/* Table Body */}
+      <div className="overflow-x-auto" ref={dropdownRef}>
+        <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-700">
+          <thead>
+            <tr className="bg-slate-50/50 dark:bg-slate-800/30">
+              <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cihaz Bilgileri</th>
+              <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest">Kullanıcı & Model</th>
+              <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Intune</th>
+              <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Jamf</th>
+              <th className="px-6 py-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Defender</th>
+              <th className="px-6 py-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest"></th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {filteredData.length > 0 ? (
-              filteredData.map((asset) => {
-                 const isMonitor = asset.type === DeviceType.Monitor;
-                 const isMac = asset.type === DeviceType.MacBook;
-                 const isComputer = asset.type === DeviceType.MacBook || asset.type === DeviceType.Desktop || asset.type === DeviceType.Notebook;
-                 const isMobile = asset.type === DeviceType.iPhone || asset.type === DeviceType.iPad;
+          <tbody className="divide-y divide-slate-50 dark:divide-slate-700">
+            {filteredData.map((asset) => {
+              const isMac = asset.type === DeviceType.MacBook;
+              const isMonitor = asset.type === DeviceType.Monitor;
+              let borderClass = "border-l-4 border-l-transparent";
+              if (asset.isStock) borderClass = "border-l-4 border-l-amber-500 bg-amber-50/10";
+              else if (asset.isExempt) borderClass = "border-l-4 border-l-teal-500 bg-teal-50/10";
+              else if (asset.isDepartment) borderClass = "border-l-4 border-l-purple-500 bg-purple-50/10";
 
-                 // Determine Row Class
-                 let rowClass = "hover:bg-slate-50 transition-colors";
-                 
-                 // Highlight Active Stock (Yellow)
-                 const isRiskyStock = asset.isStock && (asset.compliance?.inIntune || asset.compliance?.inJamf);
-                 if (isRiskyStock) {
-                     rowClass = "bg-orange-50 hover:bg-orange-100 transition-colors shadow-sm";
-                 } 
-                 // Highlight Compliant Filter
-                 else if (dashboardFilter === 'COMPLIANT') {
-                     rowClass = "bg-emerald-50/20 hover:bg-emerald-50/40 transition-colors";
-                 }
-
-                 return (
-                  <tr key={asset.id} className={rowClass}>
-                    {/* Device (Ref / Status) */}
-                    <td className="px-6 py-4 relative">
-                      <div className="flex items-start">
-                        <div className={`flex-shrink-0 h-10 w-10 rounded-lg border flex items-center justify-center mt-1 ${
-                            isRiskyStock 
-                                ? 'bg-orange-100 border-orange-200 text-orange-600' 
-                                : asset.isStock 
-                                    ? 'bg-amber-100 border-amber-200 text-amber-600' 
-                                    : 'bg-slate-100 border-slate-200 text-slate-600'
-                        }`}>
-                          {asset.isStock ? <Package className="w-5 h-5" /> : getDeviceIcon(asset.type)}
-                        </div>
-                        <div className="ml-4">
-                          <div className={`text-sm font-bold flex items-center gap-1.5 ${isRiskyStock ? 'text-orange-900' : 'text-slate-900'}`}>
-                            {isRiskyStock ? (
-                                <AlertOctagon className="w-4 h-4 text-orange-600" />
-                            ) : (
-                                <Tag className="w-3.5 h-3.5 text-slate-400" />
-                            )}
-                            {asset.assetTag}
-                          </div>
-                          <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                            <AlertCircle className="w-3 h-3" />
-                            {asset.statusDescription || 'Unknown Status'}
-                          </div>
-                          {isRiskyStock && (
-                             <div className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800 border border-orange-200">
-                                <AlertOctagon className="w-3 h-3 mr-1" />
-                                Risky Stock
-                             </div>
-                          )}
-                        </div>
+              return (
+                <tr key={asset.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer group/row ${borderClass}`} onClick={() => setSelectedAsset(asset)}>
+                  <td className="px-6 py-5">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shadow-sm border transition-transform group-hover/row:scale-110 ${asset.isStock ? 'bg-amber-100/50 border-amber-200 text-amber-600' : asset.isExempt ? 'bg-teal-100/50 border-teal-200 text-teal-600' : 'bg-slate-100 dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-500'}`}>
+                        {getDeviceIcon(asset.type)}
                       </div>
-                    </td>
-
-                    {/* Brand / Model */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-slate-900">{asset.brand || '-'}</div>
-                      <div className="text-xs text-slate-500">{asset.model || '-'}</div>
-                    </td>
-
-                    {/* Details (Serial / User Name / Full Name) */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-bold text-slate-800 tracking-wide mb-1">{asset.serialNumber}</div>
-                      <div className="flex flex-col gap-1">
-                        {asset.userName && (
-                          <div className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 w-fit">
-                            {asset.userName}
-                          </div>
-                        )}
-                        {asset.fullName && (
-                          <div className="text-sm text-slate-700 font-medium">
-                            {asset.fullName}
-                          </div>
-                        )}
-                        {/* Fallback if individual fields missing but assignedUser present */}
-                        {!asset.userName && !asset.fullName && (
-                          <div className="text-xs text-slate-500">{asset.assignedUser}</div>
-                        )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                           <span className="text-sm font-bold text-slate-900 dark:text-white uppercase">{asset.assetTag}</span>
+                           {asset.isExempt && <span className="text-[9px] font-black bg-teal-500 text-white px-1.5 py-0.5 rounded leading-none">MUAF</span>}
+                        </div>
+                        <div className="text-[11px] font-medium text-slate-500 flex items-center gap-1 mt-0.5"><Tag className="w-3 h-3 opacity-50" /> {asset.serialNumber}</div>
                       </div>
-                    </td>
-
-                    {/* Cloud Status */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {!isMonitor && !isMac ? (
-                        <StatusBadge 
-                          present={asset.compliance?.inIntune || false} 
-                          label="Intune" 
-                          type="intune" 
-                          complianceState={asset.compliance?.intuneComplianceState}
-                          lastCheckInDays={asset.compliance?.intuneLastCheckInDays}
-                        />
-                      ) : <span className="text-xs text-slate-300 font-medium px-2 text-center block w-fit">N/A</span>}
-                    </td>
-                    
-                    {/* Jamf Status */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                       {!isMonitor && isMac ? (
-                        <StatusBadge 
-                          present={asset.compliance?.inJamf || false} 
-                          label="Jamf" 
-                          type="jamf" 
-                        />
-                       ) : <span className="text-xs text-slate-300 font-medium px-2 text-center block w-fit">N/A</span>}
-                    </td>
-
-                    {/* Defender Status */}
-                    <td className="px-6 py-4 whitespace-nowrap">
-                       {isComputer || isMobile ? (
-                        <StatusBadge 
-                          present={asset.compliance?.inDefender || false} 
-                          label="Defender" 
-                          type="defender" 
-                        />
-                       ) : <span className="text-xs text-slate-300 font-medium px-2 text-center block w-fit">N/A</span>}
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-sm text-slate-500">
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <Search className="w-8 h-8 text-slate-200" />
-                    <p>No devices found matching your filters.</p>
-                  </div>
-                </td>
-              </tr>
-            )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-5">
+                    <div className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate max-w-[200px]">{asset.fullName || asset.assignedUser}</div>
+                    <div className="text-[11px] font-medium text-slate-500 uppercase tracking-tight">{asset.brand} {asset.model}</div>
+                  </td>
+                  <td className="px-6 py-5 text-center">
+                    {!isMonitor && asset.type !== DeviceType.MacBook ? renderCellStatus(!!asset.compliance?.inIntune, "Intune", "intune", asset) : <Minus className="w-4 h-4 mx-auto text-slate-200 dark:text-slate-600" />}
+                  </td>
+                  <td className="px-6 py-5 text-center">
+                    {!isMonitor && isMac ? renderCellStatus(!!asset.compliance?.inJamf, "Jamf", "jamf", asset) : <Minus className="w-4 h-4 mx-auto text-slate-200 dark:text-slate-600" />}
+                  </td>
+                  <td className="px-6 py-5 text-center">
+                    {!isMonitor && asset.type !== DeviceType.iPhone && asset.type !== DeviceType.iPad ? renderCellStatus(!!asset.compliance?.inDefender, "Defender", "defender", asset) : <Minus className="w-4 h-4 mx-auto text-slate-200 dark:text-slate-600" />}
+                  </td>
+                  <td className="px-6 py-5 text-right">
+                    <div className="opacity-0 group-hover/row:opacity-100 transition-opacity">
+                      <div className="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><Info className="w-4 h-4" /></div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
+          <tfoot>
+            <tr className="bg-slate-50/80 dark:bg-slate-900/40 border-t-2 border-slate-100 dark:border-slate-700">
+               <td colSpan={6} className="px-6 py-4">
+                  <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2"><ListIcon className="w-4 h-4 text-slate-400" /><span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Liste Özeti</span></div>
+                        <div className="h-4 w-px bg-slate-200 dark:bg-slate-700"></div>
+                        <div className="flex items-center gap-1.5"><span className="text-xs font-medium text-slate-500">Aktif Filtre:</span><span className="px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-black uppercase tracking-tight">{deviceFilter === 'All' ? (dashboardFilter === 'ALL' ? 'TÜMÜ' : dashboardFilter) : deviceFilter}</span></div>
+                     </div>
+                     <div className="flex items-center gap-2"><span className="text-xs font-bold text-slate-500">TOPLAM GÖSTERİLEN:</span><span className="px-3 py-1 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm font-black shadow-sm">{filteredData.length}</span></div>
+                  </div>
+               </td>
+            </tr>
+          </tfoot>
         </table>
-      </div>
-      <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 text-xs text-slate-500 flex justify-between">
-         <span>Showing {filteredData.length} records</span>
-         <span>Last Sync: {new Date().toLocaleString()}</span>
       </div>
     </div>
   );
 };
+
+const DatabaseIcon = (props: any) => (
+  <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>
+);
+
+const ListIcon = (props: any) => (
+  <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+);

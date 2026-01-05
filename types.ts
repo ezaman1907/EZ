@@ -9,17 +9,35 @@ export enum DeviceType {
   Other = 'Other'
 }
 
-export type DashboardFilterType = 'ALL' | 'COMPLIANT' | 'MISSING_INTUNE' | 'MISSING_JAMF' | 'MISSING_DEFENDER' | 'STOCK';
+export type DashboardFilterType = 
+  | 'ALL' 
+  | 'COMPLIANT' 
+  | 'MISSING_INTUNE' 
+  | 'MISSING_JAMF' 
+  | 'MISSING_DEFENDER' 
+  | 'STOCK'
+  | 'ORPHAN_INTUNE'    // New: Intune devices not in SAP
+  | 'ORPHAN_JAMF'      // New: Jamf devices not in SAP
+  | 'ORPHAN_DEFENDER'; // New: Defender devices not in SAP
 
 export interface ComplianceStatus {
   inIntune: boolean;
   intuneComplianceState?: string; // 'Compliant', 'NonCompliant', 'ConfigManager', etc.
   intuneLastCheckInDays?: number; // Days since last contact
+  intuneMatchMethod?: 'Serial' | 'Hostname' | 'AssetTag'; // New: How did we match it?
   
   inJamf: boolean;
+  jamfMatchMethod?: 'Serial' | 'Hostname' | 'AssetTag'; // New: How did we match it?
+
   inDefender: boolean;
+  defenderMatchMethod?: 'Serial' | 'Hostname' | 'AssetTag' | 'User'; // New: How did we match it?
   
   lastSync?: string;
+
+  // Raw data from cloud reports for detailed view
+  rawIntuneData?: any;
+  rawJamfData?: any;
+  rawDefenderData?: any;
 }
 
 export interface Asset {
@@ -40,6 +58,16 @@ export interface Asset {
   
   // New field for Stock logic
   isStock: boolean; 
+  
+  // New field for Department logic (Exempt from stats)
+  isDepartment: boolean;
+
+  // New field for Special Manual Exemptions (e.g. VIP, Test devices)
+  isExempt?: boolean;
+
+  // New field for Orphan logic (Not in SAP)
+  isOrphan?: boolean;
+  orphanSource?: 'Intune' | 'Jamf' | 'Defender';
 
   // The "Cloud" status comes from the comparison logic
   compliance?: ComplianceStatus;
@@ -60,6 +88,9 @@ export interface DashboardStats {
   stockCount: number;
   riskyStockCount: number;
   deviceTypeDistribution: { name: string; value: number }[];
+  
+  // New field for requested calculation (hidden from UI)
+  missingDefenderRatio: number;
 }
 
 export interface InventorySnapshot {
@@ -67,10 +98,16 @@ export interface InventorySnapshot {
   periodLabel: string; // e.g., "Kasım 2025"
   dateCreated: Date;
   assets: Asset[];
+  orphans: Asset[]; // New: List of devices found in cloud but not in SAP
   cloudCounts: {
     intune: number;
     jamf: number;
     defender: number;
   };
   stats: DashboardStats;
+}
+
+export interface ApiConfig {
+  jamfUrl?: string;
+  jamfToken?: string;
 }

@@ -36,7 +36,8 @@ export const generateInternalInventory = (): Asset[] => {
       userName: `0${5000+i}`,
       fullName: `Windows User ${i}`,
       assignedUser: `Windows User ${i}`,
-      isStock: false
+      isStock: false,
+      isDepartment: false
     });
   }
 
@@ -57,7 +58,8 @@ export const generateInternalInventory = (): Asset[] => {
       userName: `0${9000+i}`,
       fullName: `Desktop User ${i}`,
       assignedUser: `Desktop User ${i}`,
-      isStock: false
+      isStock: false,
+      isDepartment: false
     });
   }
 
@@ -79,7 +81,8 @@ export const generateInternalInventory = (): Asset[] => {
       userName: `0${6000+i}`,
       fullName: `Mac User ${i}`,
       assignedUser: `Mac User ${i}`,
-      isStock: false
+      isStock: false,
+      isDepartment: false
     });
   }
 
@@ -101,7 +104,8 @@ export const generateInternalInventory = (): Asset[] => {
       userName: `0${7000+i}`,
       fullName: `Mobile User ${i}`,
       assignedUser: `Mobile User ${i}`,
-      isStock: false
+      isStock: false,
+      isDepartment: false
     });
   }
 
@@ -122,7 +126,8 @@ export const generateInternalInventory = (): Asset[] => {
       userName: 'N/A',
       fullName: 'N/A',
       assignedUser: `N/A`,
-      isStock: false
+      isStock: false,
+      isDepartment: false
     });
   }
 
@@ -143,7 +148,30 @@ export const generateInternalInventory = (): Asset[] => {
         userName: '',
         fullName: '',
         assignedUser: 'IT STOCK',
-        isStock: true
+        isStock: true,
+        isDepartment: false
+      });
+  }
+
+  // Generate DEPARTMENT Items (Exempt)
+  for (let i = 0; i < 3; i++) {
+      const pDate = getRandomDate(new Date(2022, 0, 1), new Date());
+      assets.push({
+        id: `dept-${i}`,
+        assetTag: `DPT-${100 + i}`,
+        statusDescription: 'Kullanımda',
+        brand: 'Dell',
+        model: 'OptiPlex',
+        hostname: `DEPT-PC-${i}`,
+        serialNumber: generateSerial('DPT'),
+        type: DeviceType.Desktop,
+        purchaseDate: pDate,
+        assetAgeDays: calculateAge(pDate),
+        userName: '',
+        fullName: '',
+        assignedUser: 'HR DEPARTMENT',
+        isStock: false,
+        isDepartment: true
       });
   }
 
